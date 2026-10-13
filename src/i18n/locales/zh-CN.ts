@@ -4997,6 +4997,19 @@ export default {
     "favoritesPlaylistsTitle": "收藏的歌单",
     "favoritePlaylist": "收藏歌单",
     "unfavoritePlaylist": "取消收藏歌单",
-    "openPlaylist": "打开歌单"
+    "openPlaylist": "打开歌单",
+    "importList": "导入列表",
+    "exportList": "导出",
+    "importListDefault": "导入的列表",
+    "importListDone": "已导入 {{added}} 首歌曲",
+    "importListDoneSkipped": "已导入 {{added}} 首，忽略 {{skipped}} 首",
+    "importListEmpty": "文件里没有可导入的歌曲",
+    "importListUnsupported": "不支持的文件类型，请选择洛雪列表文件（.lxmc / .json）",
+    "importListInvalid": "文件内容无法解析，可能不是洛雪列表文件",
+    "importListFailed": "导入失败：{{error}}",
+    "exportListDone": "已导出 {{exported}} 首歌曲",
+    "exportListDoneSkipped": "已导出 {{exported}} 首，跳过 {{skipped}} 首非自定义音源歌曲",
+    "exportListEmpty": "这个列表没有可导出的歌曲",
+    "exportListFailed": "导出失败：{{error}}"
   }
 } as const;

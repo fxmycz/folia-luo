@@ -1,9 +1,10 @@
 // electron/lxSource/musicSdk/platforms/mg/musicInfo.cjs
-// 咪咕（mg）歌曲记录归一化：榜单/歌单/搜索三处共用。
+// 咪咕（mg）歌曲记录归一化 + 歌词所需的资源信息查询。
 // 移植自 lx-music-desktop（Apache-2.0）src/renderer/utils/musicSdk/mg/musicInfo.js，
-// 只保留纯解析函数（getMusicInfos 依赖的 POST 批量接口 Phase 2 用不到）。
+// 保留纯解析函数，并补上歌词模块依赖的 getMusicInfo（批量 getMusicInfos Phase 2 用不到）。
 
 const { sizeFormate, formatPlayTime, formatSingerName } = require('../../utils.cjs');
+const { httpFetch } = require('../../request.cjs');
 
 // 把咪咕的 formatType 映射成洛雪音质标识。
 const pushFormat = (types, _types, type, size) => {
@@ -90,4 +91,28 @@ const filterMusicInfoListV5 = (rawList) => {
   return list;
 };
 
-module.exports = { filterMusicInfoList, filterMusicInfoListV5 };
+const RESOURCE_INFO_URL = 'https://c.musicapp.migu.cn/MIGUM2.0/v1.0/content/resourceinfo.do?resourceType=2';
+
+/**
+ * 按歌曲 id 拉取资源信息，只取歌词所需的最小字段（songId / lrcUrl / mrcUrl / trcUrl）。
+ * 洛雪用自建的 createHttpFetch（返回体形状不同），这里改用项目 httpFetch 的 form 选项，
+ * 自行从 `body.resource` 列表里取首个结果，缺失字段给 null。
+ */
+const getMusicInfo = async (id) => {
+  const { body } = await httpFetch(RESOURCE_INFO_URL, {
+    method: 'POST',
+    form: { resourceId: id },
+  }).promise;
+  const item = body?.resource?.[0];
+  if (!item) {
+    return { songId: null, lrcUrl: null, mrcUrl: null, trcUrl: null };
+  }
+  return {
+    songId: item.songId ?? null,
+    lrcUrl: item.lrcUrl ?? null,
+    mrcUrl: item.mrcUrl ?? null,
+    trcUrl: item.trcUrl ?? null,
+  };
+};
+
+module.exports = { filterMusicInfoList, filterMusicInfoListV5, getMusicInfo };

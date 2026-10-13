@@ -41,6 +41,14 @@ export type LxSourceImportFileResult = {
     snapshot: LxSourceSnapshot;
 };
 
+/** 收藏列表导出：渲染层传入序列化好的 `.lxmc` 文本与建议文件名。 */
+export type LxPlaylistExportPayload = { name: string; text: string };
+
+export type LxPlaylistExportResult = { canceled: boolean; filePath: string | null };
+
+/** 收藏列表导入：用户取消时 text 为空串，解析交给渲染层。 */
+export type LxPlaylistImportResult = { canceled: boolean; name: string; text: string };
+
 export type LxSourceMusicUrlResult = { type?: string; url: string };
 
 export type LxSourceLyricResult = {
@@ -167,6 +175,10 @@ export interface LxSourceBridge {
     importScriptText(text: string): Promise<LxSourceBridgeResult<LxSourceSnapshot>>;
     /** 弹系统文件选择框导入本地 .js 音源脚本。 */
     importScriptFile(): Promise<LxSourceBridgeResult<LxSourceImportFileResult>>;
+    /** 收藏列表导出：弹保存框把 `.lxmc` 文本写到磁盘（取消时 canceled 为 true）。 */
+    exportPlaylist(payload: LxPlaylistExportPayload): Promise<LxSourceBridgeResult<LxPlaylistExportResult>>;
+    /** 收藏列表导入：弹文件选择框读 `.lxmc` / `.json` 文本（取消时 text 为空串）。 */
+    importPlaylist(): Promise<LxSourceBridgeResult<LxPlaylistImportResult>>;
     removeApis(ids: string[]): Promise<LxSourceBridgeResult<LxSourceSnapshot>>;
     setActive(apiId: string | null): Promise<LxSourceBridgeResult<LxSourceSnapshot>>;
     getStatus(): Promise<LxSourceBridgeResult<LxSourceSnapshot>>;
@@ -245,3 +257,13 @@ export const callLxSource = async <T>(
     }
     return result.data;
 };
+
+/** 导出收藏列表：把 `.lxmc` 文本交给主进程落盘。桥缺失（Web 端）时抛 unavailable。 */
+export const exportLxPlaylistFile = (payload: LxPlaylistExportPayload): Promise<LxPlaylistExportResult> => (
+    callLxSource('lx-source', bridge => bridge.exportPlaylist(payload))
+);
+
+/** 导入收藏列表：主进程读回文件文本；解析在渲染层完成。 */
+export const importLxPlaylistFile = (): Promise<LxPlaylistImportResult> => (
+    callLxSource('lx-source', bridge => bridge.importPlaylist())
+);

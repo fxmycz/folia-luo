@@ -20,7 +20,7 @@ const parseBody = (text) => {
  * 发起一次 HTTP 请求。
  * @param {string} url
  * @param {{ method?: string, headers?: Record<string, string>, form?: Record<string, string>, body?: string, timeout?: number }} [options]
- * @returns {{ promise: Promise<{ statusCode: number, body: any, headers: Record<string, string>, raw: string }>, cancelHttp: () => void }}
+ * @returns {{ promise: Promise<{ statusCode: number, body: any, headers: Record<string, string>, raw: string, rawBuffer: Buffer }>, cancelHttp: () => void }}
  */
 const httpFetch = (url, options = {}) => {
   const controller = new AbortController();
@@ -37,10 +37,12 @@ const httpFetch = (url, options = {}) => {
         init.body = options.body;
       }
       const response = await fetch(url, init);
-      const raw = await response.text();
+      // 歌词接口多为二进制（gzip / krc 等），按字节取回后再转文本给 body 解析，避免 utf8 解码损坏原始数据。
+      const rawBuffer = Buffer.from(await response.arrayBuffer());
+      const raw = rawBuffer.toString('utf8');
       const responseHeaders = {};
       response.headers.forEach((value, key) => { responseHeaders[key] = value; });
-      return { statusCode: response.status, body: parseBody(raw), headers: responseHeaders, raw };
+      return { statusCode: response.status, body: parseBody(raw), headers: responseHeaders, raw, rawBuffer };
     } finally {
       clearTimeout(timeout);
     }

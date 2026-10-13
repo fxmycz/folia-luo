@@ -149,6 +149,9 @@ contextBridge.exposeInMainWorld('electron', {
       importScriptOnline: (url) => ipcRenderer.invoke('lx-source:import-online', url),
       importScriptText: (text) => ipcRenderer.invoke('lx-source:import-text', text),
       importScriptFile: () => ipcRenderer.invoke('lx-source:import-file'),
+      // 收藏列表导入 / 导出（洛雪 `.lxmc` 格式）。导出由渲染层序列化好文本再落盘。
+      exportPlaylist: (payload) => ipcRenderer.invoke('lx-source:export-playlist', payload),
+      importPlaylist: () => ipcRenderer.invoke('lx-source:import-playlist'),
       removeApis: (ids) => ipcRenderer.invoke('lx-source:remove-apis', ids),
       setActive: (apiId) => ipcRenderer.invoke('lx-source:set-active', apiId),
       getStatus: () => ipcRenderer.invoke('lx-source:get-status'),

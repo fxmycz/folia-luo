@@ -6,10 +6,12 @@
 const leaderboard = require('./leaderboard.cjs');
 const songList = require('./songList.cjs');
 const musicSearch = require('./musicSearch.cjs');
+const lyric = require('./lyric.cjs');
 
 module.exports = {
   source: 'kw',
   leaderboard,
   songList,
   musicSearch,
+  lyric,
 };

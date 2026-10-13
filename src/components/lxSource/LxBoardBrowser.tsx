@@ -228,6 +228,10 @@ export const LxBoardBrowser: React.FC<Props> = ({ isDaylight, accentColor, onPla
     // 搜索联想：平台联想词 + 输入框下拉是否展开。
     const [suggestions, setSuggestions] = useState<string[]>([]);
     const [suggestOpen, setSuggestOpen] = useState(false);
+    // 下拉里用上下键高亮的项；-1 表示未选中（此时回车就是直接搜索）。
+    const [suggestIndex, setSuggestIndex] = useState(-1);
+    // 高亮项滚动进可视区用。
+    const activeSuggestRef = useRef<HTMLLIElement | null>(null);
 
     const mutedText = isDaylight ? 'text-zinc-500' : 'text-white/50';
     const strongText = isDaylight ? 'text-zinc-900' : 'text-white';
@@ -364,6 +368,7 @@ export const LxBoardBrowser: React.FC<Props> = ({ isDaylight, accentColor, onPla
         const keyword = (keywordArg ?? query).trim();
         if (!keyword) return;
         setSuggestOpen(false);
+        setSuggestIndex(-1);
         addHistory(keyword);
         setOpenCollection(null);
         setTracks([]);
@@ -428,6 +433,52 @@ export const LxBoardBrowser: React.FC<Props> = ({ isDaylight, accentColor, onPla
         }
         return merged.map(item => ({ value: item, fromHistory: historySet.has(item) }));
     }, [suggestions, history, query]);
+
+    // 联想结果异步刷新后可能变短，越界的高亮位置按「未选中」处理。
+    const activeSuggestIndex = suggestIndex >= 0 && suggestIndex < suggestionItems.length ? suggestIndex : -1;
+
+    // 高亮项超出下拉可视区时跟随滚动，保证上下键选中项始终可见。
+    useEffect(() => {
+        activeSuggestRef.current?.scrollIntoView({ block: 'nearest' });
+    }, [activeSuggestIndex]);
+
+    const closeSuggest = () => {
+        setSuggestOpen(false);
+        setSuggestIndex(-1);
+    };
+
+    // 输入框键盘操作：上下键在联想结果里移动高亮，回车选中高亮项（没有高亮则按原关键词搜索），Esc 收起下拉。
+    const handleSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+        const open = suggestOpen && suggestionItems.length > 0;
+        if (event.key === 'ArrowDown' && open) {
+            event.preventDefault();
+            setSuggestIndex(current => (current + 1) % suggestionItems.length);
+            return;
+        }
+        if (event.key === 'ArrowUp' && open) {
+            event.preventDefault();
+            setSuggestIndex(current => (current <= 0 ? suggestionItems.length - 1 : current - 1));
+            return;
+        }
+        if (event.key === 'Escape') {
+            if (suggestOpen) {
+                event.preventDefault();
+                closeSuggest();
+            }
+            return;
+        }
+        if (event.key === 'Enter') {
+            const picked = activeSuggestIndex >= 0 ? suggestionItems[activeSuggestIndex] : undefined;
+            if (picked) {
+                event.preventDefault();
+                setQuery(picked.value);
+                void runSearch(picked.value);
+                closeSuggest();
+                return;
+            }
+            void runSearch();
+        }
+    };
 
     // 下载入口：从歌曲 sourceRef 取回脚本要的 { source, musicInfo }，音质用界面上选定的下载音质。
     const handleDownload = useCallback((song: SongResult) => {
@@ -574,10 +625,10 @@ export const LxBoardBrowser: React.FC<Props> = ({ isDaylight, accentColor, onPla
                     <Search size={14} className={mutedText} />
                     <input
                         value={query}
-                        onChange={event => setQuery(event.target.value)}
+                        onChange={event => { setQuery(event.target.value); setSuggestIndex(-1); }}
                         onFocus={() => setSuggestOpen(true)}
-                        onBlur={() => window.setTimeout(() => setSuggestOpen(false), 120)}
-                        onKeyDown={event => { if (event.key === 'Enter') void runSearch(); }}
+                        onBlur={() => window.setTimeout(() => { setSuggestOpen(false); setSuggestIndex(-1); }, 120)}
+                        onKeyDown={handleSearchKeyDown}
                         placeholder={t('lxSource.searchPlaceholder')}
                         className={`min-w-0 flex-1 bg-transparent text-sm outline-none ${isDaylight
                             ? 'text-zinc-800 placeholder:text-zinc-400'
@@ -587,16 +638,20 @@ export const LxBoardBrowser: React.FC<Props> = ({ isDaylight, accentColor, onPla
                         <ul className={`absolute left-0 right-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-xl border py-1 shadow-lg ${isDaylight
                             ? 'border-black/10 bg-white'
                             : 'border-white/10 bg-zinc-900'}`}>
-                            {suggestionItems.map(item => (
-                                <li key={item.value}>
+                            {suggestionItems.map((item, index) => (
+                                <li
+                                    key={item.value}
+                                    ref={index === activeSuggestIndex ? activeSuggestRef : undefined}
+                                >
                                     <button
                                         type="button"
                                         // 阻止 mousedown 夺焦，blur 的延时关闭才不会抢在 click 之前。
                                         onMouseDown={event => event.preventDefault()}
+                                        onMouseEnter={() => setSuggestIndex(index)}
                                         onClick={() => { setQuery(item.value); void runSearch(item.value); }}
-                                        className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors ${isDaylight
-                                            ? 'hover:bg-black/5'
-                                            : 'hover:bg-white/10'}`}
+                                        className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors ${index === activeSuggestIndex
+                                            ? (isDaylight ? 'bg-black/5' : 'bg-white/10')
+                                            : (isDaylight ? 'hover:bg-black/5' : 'hover:bg-white/10')}`}
                                     >
                                         {item.fromHistory
                                             ? <History size={12} className="shrink-0" style={{ color: accentColor }} />

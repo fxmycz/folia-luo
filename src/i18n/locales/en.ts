@@ -4998,6 +4998,19 @@ export default {
     "favoritesPlaylistsTitle": "Saved playlists",
     "favoritePlaylist": "Save playlist",
     "unfavoritePlaylist": "Remove saved playlist",
-    "openPlaylist": "Open playlist"
+    "openPlaylist": "Open playlist",
+    "importList": "Import list",
+    "exportList": "Export",
+    "importListDefault": "Imported list",
+    "importListDone": "Imported {{added}} songs",
+    "importListDoneSkipped": "Imported {{added}} songs, ignored {{skipped}}",
+    "importListEmpty": "No importable songs in this file",
+    "importListUnsupported": "Unsupported file type. Choose an LX list file (.lxmc / .json)",
+    "importListInvalid": "Couldn't parse the file; it may not be an LX list file",
+    "importListFailed": "Import failed: {{error}}",
+    "exportListDone": "Exported {{exported}} songs",
+    "exportListDoneSkipped": "Exported {{exported}} songs, skipped {{skipped}} non-custom-source songs",
+    "exportListEmpty": "This list has no songs to export",
+    "exportListFailed": "Export failed: {{error}}"
   }
 } as const;

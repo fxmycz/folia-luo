@@ -91,7 +91,3 @@ __pycache__/
 
 # Built by build/buildPythonRuntime.mjs - binary artifacts that live on the mirrors, not in git.
 dist-runtime/
-
-# Upstream CI workflows are kept locally but not published to this mirror;
-# pushing them requires the OAuth token to carry the `workflow` scope.
-.github/workflows/

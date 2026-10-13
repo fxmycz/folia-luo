@@ -85,6 +85,19 @@ module.exports = {
     }
   },
 
+  /**
+   * 内置歌词。洛雪里歌词由 musicSdk 各平台的 lyric 模块提供（自定义音源脚本只负责直链），
+   * 本项目此前只把歌词转发给脚本，脚本没实现 lyric 的歌曲就会无歌词；这里补上同源的兜底实现。
+   * 返回 `{ lyric, tlyric, rlyric, lxlyric }`；不支持或取不到时 reject。
+   */
+  getLyric(source, musicInfo) {
+    const lyric = requirePlatform(source).lyric;
+    if (!lyric || typeof lyric.getLyric !== 'function') {
+      return Promise.reject(new Error(`平台 ${source} 不支持内置歌词`));
+    }
+    return lyric.getLyric(musicInfo);
+  },
+
   // 供离线单测直接断言各平台的纯解析函数。
   _internal: { kw, mg, kg, tx, wy },
 };

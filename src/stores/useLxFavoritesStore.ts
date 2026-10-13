@@ -70,6 +70,31 @@ const persist = (state: { lists: LxFavoriteList[]; playlists: LxFavoritePlaylist
 
 const makeId = () => `lx_list_${Math.random().toString(36).slice(2, 9)}_${Date.now()}`;
 
+/** 列表重名时追加后缀：`名字 (2)` / `名字 (3)`…，保证导入不会覆盖已有列表。 */
+const uniqueListName = (lists: LxFavoriteList[], name: string): string => {
+    const taken = new Set(lists.map(list => list.name));
+    if (!taken.has(name)) return name;
+    let index = 2;
+    while (taken.has(`${name} (${index})`)) index += 1;
+    return `${name} (${index})`;
+};
+
+/** 歌曲 id 可能是数字，统一成字符串后作为去重键。 */
+const songKey = (song: SongResult | undefined): string => (song?.id == null ? '' : String(song.id));
+
+/** 按歌曲 id 去重（保留先出现的一条），无 id 的条目直接丢弃。 */
+const dedupeSongs = (songs: SongResult[]): SongResult[] => {
+    const seen = new Set<string>();
+    const result: SongResult[] = [];
+    for (const song of songs) {
+        const key = songKey(song);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        result.push(song);
+    }
+    return result;
+};
+
 /** 歌单去重键：平台 + 歌单 id。 */
 const playlistKey = (collection: Pick<OmniCollection, 'providerId' | 'id'>) => `${collection.providerId}:${collection.id}`;
 
@@ -80,6 +105,15 @@ export type LxFavoritesState = {
     playlists: LxFavoritePlaylist[];
     /** 新建一个列表；返回新列表 id。名称两端空白会被裁掉。 */
     createList: (name: string) => string | null;
+    /**
+     * 导入一个列表：`new` 新建列表（重名自动加后缀），`append` 并入已有列表并按歌曲 id 去重。
+     * 返回 `{ listId, added, skipped }`：listId 为落库列表，added / skipped 为写入与被去重丢弃的数量。
+     */
+    importList: (
+        name: string,
+        songs: SongResult[],
+        options?: { mode: 'new' | 'append'; listId?: string },
+    ) => { listId: string; added: number; skipped: number };
     removeList: (listId: string) => void;
     renameList: (listId: string, name: string) => void;
     /** 把一首歌加入指定列表（已在则不动）。 */
@@ -123,6 +157,31 @@ export const useLxFavoritesStore = create<LxFavoritesState>((set, get) => {
             const list: LxFavoriteList = { id: makeId(), name: trimmed, createdAt: Date.now(), songs: [] };
             commit([...get().lists, list]);
             return list.id;
+        },
+
+        importList: (name, songs, options) => {
+            const trimmed = name.trim() || '导入列表';
+            const mode = options?.mode ?? 'new';
+            if (mode === 'append' && options?.listId) {
+                const target = get().lists.find(list => list.id === options.listId);
+                if (target) {
+                    const existing = new Set(target.songs.map(song => songKey(song)));
+                    const fresh = dedupeSongs(songs).filter(song => !existing.has(songKey(song)));
+                    commit(get().lists.map(list => (list.id === target.id
+                        ? { ...list, songs: [...list.songs, ...fresh] }
+                        : list)));
+                    return { listId: target.id, added: fresh.length, skipped: songs.length - fresh.length };
+                }
+            }
+            const deduped = dedupeSongs(songs);
+            const list: LxFavoriteList = {
+                id: makeId(),
+                name: uniqueListName(get().lists, trimmed),
+                createdAt: Date.now(),
+                songs: deduped,
+            };
+            commit([...get().lists, list]);
+            return { listId: list.id, added: deduped.length, skipped: songs.length - deduped.length };
         },
 
         removeList: (listId) => {

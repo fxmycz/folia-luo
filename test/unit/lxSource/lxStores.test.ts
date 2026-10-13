@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SongResult } from '@/types';
 
 // test/unit/lxSource/lxStores.test.ts
 // 自定义音源版块两个 renderer store 的离线单测：
@@ -85,6 +86,48 @@ describe('useLxFavoritesStore · playlist entries', () => {
         const store = await favoritesStore();
         expect(store.getState().lists).toHaveLength(1);
         expect(store.getState().playlists).toEqual([]);
+    });
+});
+
+describe('useLxFavoritesStore · importList', () => {
+    const song = (id: string): SongResult => ({
+        id,
+        name: id,
+        artists: [],
+        album: { id: '', name: '' },
+        durationMs: 0,
+    });
+
+    it('creates a new list and de-duplicates songs by id', async () => {
+        const store = await favoritesStore();
+        const result = store.getState().importList('洛雪导入', [song('lc:1'), song('lc:1'), song('lc:2')], { mode: 'new' });
+
+        expect(result.added).toBe(2);
+        expect(result.skipped).toBe(1);
+        const list = store.getState().lists.find(item => item.id === result.listId);
+        expect(list?.name).toBe('洛雪导入');
+        expect(list?.songs.map(item => item.id)).toEqual(['lc:1', 'lc:2']);
+    });
+
+    it('adds a suffix when a list with the same name already exists', async () => {
+        const store = await favoritesStore();
+        store.getState().createList('我的收藏');
+
+        const result = store.getState().importList('我的收藏', [song('lc:1')], { mode: 'new' });
+        const list = store.getState().lists.find(item => item.id === result.listId);
+        expect(list?.name).toBe('我的收藏 (2)');
+    });
+
+    it('appends into an existing list and skips songs already there', async () => {
+        const store = await favoritesStore();
+        const listId = store.getState().createList('目标列表')!;
+        store.getState().addSong(listId, song('lc:1'));
+
+        const result = store.getState().importList('目标列表', [song('lc:1'), song('lc:2')], { mode: 'append', listId });
+        expect(result.listId).toBe(listId);
+        expect(result.added).toBe(1);
+        expect(result.skipped).toBe(1);
+        expect(store.getState().lists.find(item => item.id === listId)?.songs.map(item => item.id)).toEqual(['lc:1', 'lc:2']);
     });
 });
 

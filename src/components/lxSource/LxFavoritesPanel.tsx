@@ -1,14 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Download, ListMusic, Play, Plus, Star, Trash2, X } from 'lucide-react';
+import { Download, FileDown, ListMusic, Play, Plus, Star, Trash2, Upload, X } from 'lucide-react';
 import type { SongResult } from '../../types';
 import type { OmniCollection } from '../../types/onlineMusic';
 import { useLxFavoritesStore } from '../../stores/useLxFavoritesStore';
+import { buildLxPlaylistFile, parseLxPlaylistFile } from '../../services/lxSource/lxPlaylistFile';
+import { exportLxPlaylistFile, importLxPlaylistFile } from '../../services/lxSource/lxSourceTransport';
 import { useLxSongDownload } from './useLxSongDownload';
 
 // src/components/lxSource/LxFavoritesPanel.tsx
 // 「收藏」标签：自建列表（可新建 / 删除）+ 收藏的歌单条目；右侧是选中列表的歌曲（播放 / 移除 / 下载）。
 // 数据全部来自 useLxFavoritesStore（localStorage），与 Folia 的本地曲库互不相干。
+// 列表支持按洛雪（LX Music）的 `.lxmc` 格式导入 / 导出，文件互通。
 
 type Props = {
     isDaylight: boolean;
@@ -27,6 +30,11 @@ const PLAYLIST_PLATFORM_LABELS: Record<string, string> = {
     'lx-wy': '网易云音乐',
 };
 
+/** 导入 / 导出的一次性提示条。 */
+type LxNotice = { tone: 'ok' | 'warn' | 'error'; text: string };
+
+const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
 const formatDuration = (durationMs: number): string => {
     if (!durationMs || durationMs <= 0) return '--/--';
     const totalSeconds = Math.floor(durationMs / 1000);
@@ -39,6 +47,7 @@ export const LxFavoritesPanel: React.FC<Props> = ({ isDaylight, accentColor, onP
     const { t } = useTranslation();
     const lists = useLxFavoritesStore(state => state.lists);
     const createList = useLxFavoritesStore(state => state.createList);
+    const importList = useLxFavoritesStore(state => state.importList);
     const removeList = useLxFavoritesStore(state => state.removeList);
     const removeSong = useLxFavoritesStore(state => state.removeSong);
     const playlists = useLxFavoritesStore(state => state.playlists);
@@ -47,6 +56,14 @@ export const LxFavoritesPanel: React.FC<Props> = ({ isDaylight, accentColor, onP
 
     const [newName, setNewName] = useState('');
     const [selectedId, setSelectedId] = useState<string | null>(null);
+    const [notice, setNotice] = useState<LxNotice | null>(null);
+
+    // 提示条几秒后自动消失。
+    useEffect(() => {
+        if (!notice) return;
+        const timer = window.setTimeout(() => setNotice(null), 4000);
+        return () => window.clearTimeout(timer);
+    }, [notice]);
 
     // 选中的列表被删掉（或还没选）时回落到第一个。
     useEffect(() => {
@@ -68,6 +85,61 @@ export const LxFavoritesPanel: React.FC<Props> = ({ isDaylight, accentColor, onP
         if (!id) return;
         setSelectedId(id);
         setNewName('');
+    };
+
+    // 导入列表：弹文件选择框 → 解析洛雪 `.lxmc` → 新建同名列表并选中。
+    const handleImport = async () => {
+        try {
+            const file = await importLxPlaylistFile();
+            if (file.canceled) return;
+            const parsed = parseLxPlaylistFile(file.text);
+            if (!parsed.ok) {
+                setNotice({
+                    tone: 'error',
+                    text: parsed.reason === 'unsupported-type'
+                        ? t('lxSource.importListUnsupported')
+                        : t('lxSource.importListInvalid'),
+                });
+                return;
+            }
+            if (parsed.songs.length === 0) {
+                setNotice({ tone: 'warn', text: t('lxSource.importListEmpty') });
+                return;
+            }
+            const listName = parsed.name || t('lxSource.importListDefault');
+            const { listId, added, skipped } = importList(listName, parsed.songs, { mode: 'new' });
+            setSelectedId(listId);
+            setNotice({
+                tone: 'ok',
+                text: skipped > 0
+                    ? t('lxSource.importListDoneSkipped', { added, skipped })
+                    : t('lxSource.importListDone', { added }),
+            });
+        } catch (error) {
+            setNotice({ tone: 'error', text: t('lxSource.importListFailed', { error: errorText(error) }) });
+        }
+    };
+
+    // 导出当前选中的列表：序列化为洛雪 `.lxmc` → 弹保存框。
+    const handleExport = async () => {
+        if (!selected) return;
+        try {
+            const built = buildLxPlaylistFile(selected);
+            if (built.exported === 0) {
+                setNotice({ tone: 'warn', text: t('lxSource.exportListEmpty') });
+                return;
+            }
+            const saved = await exportLxPlaylistFile({ name: selected.name, text: built.text });
+            if (saved.canceled) return;
+            setNotice({
+                tone: 'ok',
+                text: built.skipped > 0
+                    ? t('lxSource.exportListDoneSkipped', { exported: built.exported, skipped: built.skipped })
+                    : t('lxSource.exportListDone', { exported: built.exported }),
+            });
+        } catch (error) {
+            setNotice({ tone: 'error', text: t('lxSource.exportListFailed', { error: errorText(error) }) });
+        }
     };
 
     return (
@@ -92,6 +164,17 @@ export const LxFavoritesPanel: React.FC<Props> = ({ isDaylight, accentColor, onP
                     >
                         <Plus size={15} />
                         {t('lxSource.newList')}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => { void handleImport(); }}
+                        title={t('lxSource.importList')}
+                        className={`flex shrink-0 items-center gap-1.5 rounded-xl border px-4 py-2 text-sm font-medium transition-colors ${isDaylight
+                            ? 'border-black/10 bg-white/80 text-zinc-700 hover:bg-black/5'
+                            : 'border-white/10 bg-black/20 text-white/85 hover:bg-white/10'}`}
+                    >
+                        <Upload size={15} />
+                        {t('lxSource.importList')}
                     </button>
                 </div>
             </div>
@@ -206,6 +289,17 @@ export const LxFavoritesPanel: React.FC<Props> = ({ isDaylight, accentColor, onP
                                     <p className={`min-w-0 flex-1 truncate text-sm font-semibold ${strongText}`}>{selected.name}</p>
                                     <button
                                         type="button"
+                                        onClick={() => { void handleExport(); }}
+                                        title={t('lxSource.exportList')}
+                                        className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${isDaylight
+                                            ? 'border-black/10 text-zinc-600 hover:bg-black/5'
+                                            : 'border-white/15 text-white/80 hover:bg-white/10'}`}
+                                    >
+                                        <FileDown size={12} />
+                                        {t('lxSource.exportList')}
+                                    </button>
+                                    <button
+                                        type="button"
                                         onClick={() => onPlaySong(selected.songs[0], selected.songs)}
                                         className="flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-white"
                                         style={{ backgroundColor: accentColor }}
@@ -266,6 +360,17 @@ export const LxFavoritesPanel: React.FC<Props> = ({ isDaylight, accentColor, onP
                             </>
                         )}
                     </section>
+                </div>
+            )}
+
+            {notice && (
+                <div className={`fixed bottom-6 left-1/2 z-[10001] max-w-[80vw] -translate-x-1/2 truncate rounded-xl px-4 py-2 text-xs shadow-[0_8px_24px_rgba(0,0,0,0.32)] ${notice.tone === 'error'
+                    ? 'bg-rose-600 text-white'
+                    : notice.tone === 'ok'
+                        ? 'bg-emerald-600 text-white'
+                        : (isDaylight ? 'bg-zinc-800 text-white' : 'bg-white text-zinc-900')}`}
+                >
+                    {notice.text}
                 </div>
             )}
         </div>

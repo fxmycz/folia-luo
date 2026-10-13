@@ -17,6 +17,8 @@ const INFO_LENGTHS = {
 
 const STORE_KEY_APIS = 'userApis';
 const STORE_KEY_ACTIVE = 'activeApiId';
+// 各文件选择框最后一次选中的路径（键为对话框用途，如 script / playlist），下次打开时定位到同一处。
+const STORE_KEY_LAST_PATHS = 'lastFilePaths';
 
 /**
  * 从脚本首个块注释里解析 `@name` / `@version` 等字段。
@@ -173,6 +175,23 @@ function createLxSourceStore({ store = new Store({ name: 'lx-source' }) } = {}) 
 
   const getScript = async (id) => inflateScript(scripts.get(id) ?? '');
 
+  /** 取某用途的文件选择框最后一次选中的路径；无记录返回 undefined。 */
+  const getLastFilePath = (key) => {
+    const paths = store.get(STORE_KEY_LAST_PATHS);
+    const value = paths && typeof paths === 'object' ? paths[key] : undefined;
+    return typeof value === 'string' && value ? value : undefined;
+  };
+
+  /** 记录某用途的文件选择框最后一次选中的路径。 */
+  const setLastFilePath = (key, filePath) => {
+    if (typeof key !== 'string' || !key) return;
+    const paths = store.get(STORE_KEY_LAST_PATHS);
+    const next = paths && typeof paths === 'object' && !Array.isArray(paths) ? { ...paths } : {};
+    if (typeof filePath === 'string' && filePath) next[key] = filePath;
+    else delete next[key];
+    store.set(STORE_KEY_LAST_PATHS, next);
+  };
+
   return {
     getUserApis,
     getApiInfo,
@@ -182,6 +201,8 @@ function createLxSourceStore({ store = new Store({ name: 'lx-source' }) } = {}) 
     setAllowShowUpdateAlert,
     getActiveApiId,
     setActiveApiId,
+    getLastFilePath,
+    setLastFilePath,
   };
 }
 

@@ -4883,6 +4883,19 @@ export default {
     "favoritesPlaylistsTitle": "Playlist tersimpan",
     "favoritePlaylist": "Simpan playlist",
     "unfavoritePlaylist": "Hapus playlist tersimpan",
-    "openPlaylist": "Buka playlist"
+    "openPlaylist": "Buka playlist",
+    "importList": "Impor daftar",
+    "exportList": "Ekspor",
+    "importListDefault": "Daftar impor",
+    "importListDone": "Berhasil mengimpor {{added}} lagu",
+    "importListDoneSkipped": "Berhasil mengimpor {{added}} lagu, mengabaikan {{skipped}}",
+    "importListEmpty": "Tidak ada lagu yang bisa diimpor dalam file ini",
+    "importListUnsupported": "Jenis file tidak didukung. Pilih file daftar LX (.lxmc / .json)",
+    "importListInvalid": "File tidak dapat diurai; mungkin bukan file daftar LX",
+    "importListFailed": "Impor gagal: {{error}}",
+    "exportListDone": "Berhasil mengekspor {{exported}} lagu",
+    "exportListDoneSkipped": "Berhasil mengekspor {{exported}} lagu, melewati {{skipped}} lagu non-sumber kustom",
+    "exportListEmpty": "Daftar ini tidak memiliki lagu untuk diekspor",
+    "exportListFailed": "Ekspor gagal: {{error}}"
   }
 } as const;
