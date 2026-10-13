@@ -1,0 +1,229 @@
+// electron/lxSource/lxSourceIpc.cjs
+// 自定义音源版块的主进程入口：创建仓储与宿主，注册渲染层要用的 `lx-source:*` handler。
+// 返回统一 `{ ok: true, data } | { ok: false, error: { code, message } }`，与 bodian / kugou 的桥一致。
+const { app, BrowserWindow, dialog } = require('electron');
+const fs = require('node:fs');
+const path = require('node:path');
+const Store = require('electron-store').default || require('electron-store');
+const { createLxSourceStore } = require('./lxSourceStore.cjs');
+const { createLxSourceHost } = require('./lxSourceHost.cjs');
+const { createLxDownload } = require('./lxDownload.cjs');
+const musicSdk = require('./musicSdk/index.cjs');
+
+// 与 renderer 侧 OnlineProviderError 的错误码词汇保持一致。
+const ok = (data) => ({ ok: true, data });
+const fail = (code, message) => ({ ok: false, error: { code, message } });
+
+// 导入脚本时限制体积（在线链接与本地文件共用），避免把超大文件塞进 electron-store。
+const MAX_SCRIPT_BYTES = 2 * 1024 * 1024;
+
+// 下载目录默认值：系统音乐目录下的 Folia 子目录；逐个回退到下载目录 / 主目录，永不抛错。
+const defaultDownloadDir = () => {
+  for (const name of ['music', 'downloads', 'home']) {
+    try {
+      return path.join(app.getPath(name), 'Folia');
+    } catch {
+      // 该路径名不可用，试下一个。
+    }
+  }
+  return path.join(process.cwd(), 'Folia');
+};
+
+const fetchScriptText = async (url) => {
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+    throw new Error('请输入 http(s) 开头的音源地址');
+  }
+  const response = await fetch(url, { redirect: 'follow' });
+  if (!response.ok) throw new Error(`下载音源失败：HTTP ${response.status}`);
+  const text = await response.text();
+  if (text.length > MAX_SCRIPT_BYTES) throw new Error('音源脚本过大，已中止导入');
+  return text;
+};
+
+/**
+ * 注册自定义音源版块的 IPC。
+ * @param {object} options
+ * @param {Electron.IpcMain} options.ipcMain
+ * @param {(webContents: Electron.WebContents) => boolean} options.isTrusted 仅接受主窗口发来的请求
+ * @param {string} [options.userAgent] 在线导入脚本时使用的 UA
+ */
+function registerLxSourceIpc({ ipcMain, isTrusted, warn = console.warn }) {
+  const store = createLxSourceStore();
+
+  const broadcast = (channel, payload) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send(channel, payload);
+    }
+  };
+
+  const host = createLxSourceHost({
+    ipcMain,
+    store,
+    warn,
+    onStatusChange: (status) => broadcast('lx-source:status-changed', status),
+    onUpdateAlert: (alert) => broadcast('lx-source:update-alert', alert),
+  });
+
+  // Phase 3：下载队列。与音源仓储共用同一个 electron-store 命名空间 `lx-source`，只占 `downloadDir` 键。
+  const download = createLxDownload({
+    host,
+    store: new Store({ name: 'lx-source' }),
+    defaultDir: defaultDownloadDir(),
+    onProgress: (task) => broadcast('lx-source:download-progress', task),
+    warn,
+  });
+
+  // 一次性快照：列表 + 激活源 + 宿主状态，避免渲染层连续 invoke 三次。
+  const snapshot = () => ({
+    apis: store.getUserApis(),
+    activeApiId: store.getActiveApiId(),
+    status: host.getStatus(),
+  });
+
+  const guard = (handler) => async (event, ...args) => {
+    if (!isTrusted(event.sender)) return fail('unavailable', '未授权的音源请求');
+    try {
+      return ok(await handler(...args));
+    } catch (error) {
+      return fail('invalid-response', error?.message ?? String(error));
+    }
+  };
+
+  ipcMain.handle('lx-source:list-apis', guard(() => snapshot()));
+
+  ipcMain.handle('lx-source:import-online', guard(async (url) => {
+    const text = await fetchScriptText(url);
+    await store.importApi(text);
+    return snapshot();
+  }));
+
+  ipcMain.handle('lx-source:import-text', guard(async (text) => {
+    await store.importApi(text);
+    return snapshot();
+  }));
+
+  // 本地文件导入：弹系统文件选择框挑一个 .js 音源脚本，读为 UTF-8 后落盘。
+  // 用户取消时不算失败，返回 `{ canceled: true, snapshot }` 让渲染层保持原状。
+  ipcMain.handle('lx-source:import-file', async (event) => {
+    if (!isTrusted(event.sender)) return fail('unavailable', '未授权的音源请求');
+    try {
+      const parentWindow = BrowserWindow.fromWebContents(event.sender);
+      const options = {
+        title: '选择音源脚本',
+        properties: ['openFile'],
+        filters: [
+          { name: '音源脚本', extensions: ['js'] },
+          { name: '所有文件', extensions: ['*'] },
+        ],
+      };
+      const result = parentWindow
+        ? await dialog.showOpenDialog(parentWindow, options)
+        : await dialog.showOpenDialog(options);
+      if (result.canceled || result.filePaths.length === 0) {
+        return ok({ canceled: true, snapshot: snapshot() });
+      }
+      const filePath = result.filePaths[0];
+      const { size } = await fs.promises.stat(filePath);
+      if (size > MAX_SCRIPT_BYTES) throw new Error('音源脚本过大，已中止导入');
+      const text = await fs.promises.readFile(filePath, 'utf8');
+      await store.importApi(text);
+      return ok({ canceled: false, snapshot: snapshot() });
+    } catch (error) {
+      return fail('invalid-response', error?.message ?? String(error));
+    }
+  });
+
+  ipcMain.handle('lx-source:remove-apis', guard(async (ids) => {
+    const activeId = store.getActiveApiId();
+    store.removeApis(ids);
+    // 删掉的是当前激活源：宿主一并卸载，避免继续跑已删除的脚本。
+    if (Array.isArray(ids) && activeId && ids.includes(activeId)) await host.unload();
+    return snapshot();
+  }));
+
+  ipcMain.handle('lx-source:set-active', guard(async (apiId) => {
+    if (apiId) {
+      store.setActiveApiId(apiId);
+      await host.load(apiId);
+    } else {
+      store.setActiveApiId(null);
+      await host.unload();
+    }
+    return snapshot();
+  }));
+
+  ipcMain.handle('lx-source:get-status', guard(() => snapshot()));
+
+  // quality 由渲染层按音源声明的音质集合解析好之后传入。
+  const resolveByAction = (action) => guard(async (payload = {}) => {
+    const { source, musicInfo, quality } = payload;
+    if (!source) throw new Error('缺少平台标识');
+    const info = action === 'musicUrl' ? { type: quality, musicInfo } : { musicInfo };
+    const result = await host.request({ source, action, info });
+    return result?.data ?? result;
+  });
+
+  ipcMain.handle('lx-source:get-music-url', resolveByAction('musicUrl'));
+  ipcMain.handle('lx-source:get-lyric', resolveByAction('lyric'));
+  ipcMain.handle('lx-source:get-pic', resolveByAction('pic'));
+
+  // Phase 2：平台榜单 / 歌单 / 搜索数据来自移植的洛雪 musicSdk（仅 kw / mg）。
+  // 返回洛雪原始记录（source/songmid/singer/interval/…），归一化交给渲染层的 lxNormalize。
+  ipcMain.handle('lx-source:get-boards', guard((source) => musicSdk.getBoards(source)));
+  ipcMain.handle('lx-source:get-board-tracks', guard((payload) => musicSdk.getBoardTracks(payload)));
+  ipcMain.handle('lx-source:get-playlist-tracks', guard((payload) => musicSdk.getPlaylistTracks(payload)));
+  ipcMain.handle('lx-source:search-songs', guard((payload) => musicSdk.searchSongs(payload)));
+  ipcMain.handle('lx-source:search-playlists', guard((payload) => musicSdk.searchPlaylists(payload)));
+  // 搜索联想：平台不支持 / 请求失败时返回空数组，渲染层据此回退到本地搜索历史。
+  ipcMain.handle('lx-source:search-suggestions', guard((payload) => musicSdk.searchSuggestions(payload)));
+
+  // Phase 3：下载。目录选择需要拿到发起请求的窗口作为 dialog 的父窗口，故单独处理。
+  ipcMain.handle('lx-source:choose-download-dir', async (event) => {
+    if (!isTrusted(event.sender)) return fail('unavailable', '未授权的音源请求');
+    try {
+      const parentWindow = BrowserWindow.fromWebContents(event.sender);
+      const currentDir = download.getDownloadDir();
+      const options = {
+        title: '选择下载目录',
+        properties: ['openDirectory', 'createDirectory'],
+        defaultPath: currentDir,
+      };
+      const result = parentWindow
+        ? await dialog.showOpenDialog(parentWindow, options)
+        : await dialog.showOpenDialog(options);
+      if (result.canceled || result.filePaths.length === 0) {
+        return ok({ canceled: true, dir: currentDir });
+      }
+      return ok({ canceled: false, dir: download.setDownloadDir(result.filePaths[0]) });
+    } catch (error) {
+      return fail('invalid-response', error?.message ?? String(error));
+    }
+  });
+
+  ipcMain.handle('lx-source:start-download', guard((payload) => download.start(payload)));
+  ipcMain.handle('lx-source:cancel-download', guard((taskId) => download.cancel(taskId)));
+  ipcMain.handle('lx-source:remove-download', guard((taskId) => download.remove(taskId)));
+  ipcMain.handle('lx-source:list-downloads', guard(() => ({
+    dir: download.getDownloadDir(),
+    tasks: download.list(),
+  })));
+
+  ipcMain.handle('lx-source:open-devtools', guard(() => {
+    host.openDevTools();
+    return true;
+  }));
+
+  host.init();
+
+  // 启动时恢复上次激活的音源；失败不阻塞启动，只更新状态。
+  const activeId = store.getActiveApiId();
+  if (activeId) {
+    host.load(activeId).catch((error) => {
+      warn('[lx-source] failed to restore active source:', error?.message ?? error);
+    });
+  }
+
+  return { store, host, download, snapshot };
+}
+
+module.exports = { registerLxSourceIpc };
