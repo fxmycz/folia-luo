@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react';
 import type { LineRenderHints } from './utils/lyrics/renderHints';
-import type { MediaId, PlaybackSourceRef, ProviderCatalogRef } from './types/onlineMusic';
+import type { LyricProviderSource } from './utils/lyrics/lyricSources';
+import type { MediaId, OnlineProviderId, PlaybackSourceRef, ProviderCatalogRef } from './types/onlineMusic';
 
 export interface LyricRuby {
   text: string;
@@ -71,8 +72,12 @@ export interface Line {
   isChorus?: boolean;
   chorusEffect?: 'bars' | 'circles' | 'beams';
   // User-saved fine word boundaries for fullText, baked in upstream by the lyric setter.
-  // join('') must equal fullText. When present it wins over Intl.Segmenter word segmentation.
+  // join('') must equal fullText. When present it wins over every automatic segmentation.
   wordSegments?: string[];
+  // icu-folia's automatic word boundaries for fullText (utils/lyrics/icuFolia), baked in by the
+  // lyric setter once its engines have loaded. Used when there is no wordSegments; absent until
+  // then, and the line falls back to plain Intl.Segmenter.
+  autoWordSegments?: string[];
 }
 
 export interface LyricData {
@@ -123,7 +128,7 @@ export type BuiltinVisualizerMode = 'classic' | 'cadenza' | 'partita' | 'fume' |
 export type VisualizerMode = BuiltinVisualizerMode | (string & {});
 export type VisualizerFrameRate = 'off' | 120 | 90 | 60;
 
-export type HomeViewTab = 'playlist' | 'local' | 'albums' | 'navidrome' | 'radio';
+export type HomeViewTab = 'playlist' | 'local' | 'albums' | 'navidrome' | 'radio' | 'explore' | 'luoxue';
 
 export type PlaybackContext = 'main' | 'stage';
 export type StageSource = 'stage-api' | 'now-playing' | 'playercap';
@@ -578,6 +583,45 @@ export const DEFAULT_SONNET_TUNING: SonnetTuning = {
   postProcessVignette: 0.85,
   postProcessLensDistortion: 0.3,
   postProcessLensDispersion: 0.6,
+};
+
+/**
+ * One beat effect's own setting under 智能动感模式 (services/beatFx/beatEffects.ts): whether it plays,
+ * and its strength, 0..2, 1 being the look it was tuned to.
+ */
+export interface BeatEffectSetting {
+  on: boolean;
+  strength: number;
+}
+
+/**
+ * 智能动感模式's three settings (2026-10-17, the user's 全开 / 半开 / 不开):
+ * - `on`: the effects play, and a track with nothing stored is analysed now on the GPU.
+ * - `cached`: the effects play from what is already stored - a track analysed before under `on`, or
+ *   whose beats automix analysed - and nothing is ever started for them: no model run, no decode, no
+ *   stream read. A track with nothing stored keeps its original picture. Runs already in flight
+ *   elsewhere (automix's) are waited for and used, as they cost nothing more. Automix itself is not
+ *   changed by this setting.
+ * - `off`: every picture exactly as it was; nothing read, nothing run.
+ */
+export type SmartBeatMode = 'off' | 'cached' | 'on';
+
+/**
+ * 智能动感模式, one setting for every visualizer and background that draws beat FX, and each effect's
+ * own setting. The effects a picture has are declared on its registry entry (`beatEffects`), each
+ * reading beat_this' beats or htdemucs' drum hits (src/services/beatFx). An effect with nothing
+ * stored plays at strength 1. Read `mode` through `smartBeatActive` / `smartBeatMayAnalyse`
+ * (services/beatFx/beatEffects.ts), never by comparing it in place.
+ */
+export interface SmartBeatSettings {
+  mode: SmartBeatMode;
+  /** Keyed by effect id (`sonnet.lensTear`); only the effects the user has touched. */
+  effects: Readonly<Record<string, BeatEffectSetting>>;
+}
+
+export const DEFAULT_SMART_BEAT_SETTINGS: SmartBeatSettings = {
+  mode: 'off',
+  effects: {},
 };
 
 /**
@@ -1136,6 +1180,16 @@ export enum PlayerState {
 export interface StatusMessage {
   type: 'error' | 'success' | 'info';
   text: string;
+  /** A second line under the text: what to do about it. */
+  note?: string;
+  /** Words quoted from outside the app (a platform's own answer), with their code. */
+  quote?: { text: string; code?: string };
+  /** A count down to the action happening on its own (the skip to the next song): its line ("5 秒后跳到下一首"),
+   *  the whole seconds left and the whole time, so the action button fills over it without stepping. Kept out
+   *  of `text` so the toast stays the same one while it counts. */
+  countdown?: { text: string; seconds: number; totalMs: number };
+  /** The online platform the message is about: its mark stands before the text, in place of the type's icon. */
+  providerId?: OnlineProviderId;
   nonce?: number;
   durationMs?: number;
   actionLabel?: string;
@@ -1147,29 +1201,7 @@ export interface StatusMessage {
   persistent?: boolean;
 }
 
-// Netease / Search API Types
-
-export interface NeteaseUser {
-  userId: number;
-  nickname: string;
-  avatarUrl: string;
-  backgroundUrl?: string;
-  vipType?: number;
-}
-
-export interface NeteasePlaylist {
-  id: number;
-  name: string;
-  coverImgUrl: string;
-  trackCount: number;
-  playCount: number;
-  updateTime: number;
-  trackUpdateTime: number;
-  creator: NeteaseUser;
-  description?: string;
-  // 'cloud' 是本地合成的云盘卡；数字是网易云 `/user/playlist` 原样给的（0 普通歌单，5「我喜欢的音乐」）。
-  specialType?: 'cloud' | number;
-}
+// Search API Types
 
 export interface Artist {
   id: MediaId;
@@ -1205,7 +1237,8 @@ export interface NoCopyrightRecommendation {
   expInfo?: unknown | null;
 }
 
-export type LyricProviderSource = 'netease' | 'qq' | 'kugou' | 'amll';
+// The names of the lyric sources, read off the table in utils/lyrics/lyricSources.ts.
+export type { LyricProviderSource };
 export type AmllDbPlatform = 'ncm' | 'qq';
 
 export interface ReplayGainInfo {
@@ -1314,7 +1347,7 @@ export interface LocalSong {
   matchedLyricsSource?: LyricProviderSource;
   matchedLyricsProviderPlatform?: AmllDbPlatform;
 
-  // User preferences for online data override (set via LyricMatchModal)
+  // User preferences for online data override (set via LocalSongLyricMatch)
   lyricsSource?: 'local' | 'embedded' | 'online';  // Explicit lyrics source selection; undefined = the configured automatic priority
   useOnlineCover?: boolean;     // Prefer online cover over embedded cover
 
@@ -1400,6 +1433,9 @@ export type {
 // Extend SongResult to support local files and Navidrome files
 export interface UnifiedSong extends SongResult {
   sourceRef: PlaybackSourceRef;
+  // The row this song was read from, where its collection names its rows: a YouTube Music
+  // playlist may hold a song twice, and a removal names the row. It says nothing of the song.
+  collectionRowId?: string;
   isLocal?: boolean;
   localRef?: import('./types/localLibrary').LocalSongReference;
   isNavidrome?: boolean;

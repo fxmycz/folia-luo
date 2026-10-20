@@ -13,13 +13,40 @@ const hasElectronSelfCheck = (): boolean => (
 /** 此刻能不能自检：桌面版总能；网页版要配置了远端 API。 */
 export const canRunLoginSelfCheck = (remoteBase: string | null): boolean => hasElectronSelfCheck() || Boolean(remoteBase);
 
+const isLoopbackHost = (hostname: string): boolean => (
+    hostname === 'localhost' || hostname.endsWith('.localhost') || /^127\./.test(hostname) || hostname === '[::1]' || hostname === '::1'
+);
+
+const MOBILE_UA = /Android|iPhone|iPad|iPod/i;
+
+/**
+ * API 地址指向本机却不可能有 API 服务：页面不在本机上，或者跑在手机上（打包进 App 的页面自己可能就在 localhost，
+ * 但手机上不会有 API 服务）。常见于照抄 .env.example 的 http://localhost:3000 再部署或打包。
+ * 这时 no-cors 探测可能拿到本机别的服务的不透明响应，被当成可达，所以先单独判断。
+ */
+const isMisplacedLoopbackApi = (remoteBase: string): boolean => {
+    if (typeof window === 'undefined' || !window.location) return false;
+    try {
+        const api = new URL(remoteBase, window.location.href);
+        if (!isLoopbackHost(api.hostname)) return false;
+        const userAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent;
+        return !isLoopbackHost(window.location.hostname) || MOBILE_UA.test(userAgent);
+    } catch {
+        return false;
+    }
+};
+
 // 网页版：no-cors 请求只要拿到任何响应（哪怕是不透明的）就说明远端可达；网络层失败才会抛 TypeError。
+// 不改用 cors：NeteaseCloudMusicApi 的根路径不带 CORS 头，正常部署也会被误判成拦截。
 const probeRemoteApi = async (providerId: OnlineProviderId, remoteBase: string): Promise<LoginSelfCheckResult> => {
     const startedAt = Date.now();
     const controller = typeof AbortController === 'undefined' ? null : new AbortController();
     const timer = controller ? setTimeout(() => controller.abort(), WEB_PROBE_TIMEOUT_MS) : null;
     let probe: NonNullable<LoginSelfCheckResult['backend']>['probe'];
     try {
+        if (isMisplacedLoopbackApi(remoteBase)) {
+            throw Object.assign(new Error('API address points to this device (localhost); no API service runs here'), { code: 'ELOOPBACK' });
+        }
         const response = await fetch(`${remoteBase.replace(/\/$/, '')}/`, {
             mode: 'no-cors',
             cache: 'no-store',
@@ -32,7 +59,9 @@ const probeRemoteApi = async (providerId: OnlineProviderId, remoteBase: string):
             httpStatus: null,
             durationMs: Date.now() - startedAt,
             error: {
-                code: error instanceof DOMException && error.name === 'AbortError' ? 'ETIMEDOUT' : null,
+                code: error instanceof DOMException && error.name === 'AbortError'
+                    ? 'ETIMEDOUT'
+                    : (error as { code?: unknown } | null)?.code === 'ELOOPBACK' ? 'ELOOPBACK' : null,
                 message: error instanceof Error ? error.message : String(error),
             },
         };

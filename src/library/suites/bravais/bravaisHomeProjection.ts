@@ -3,20 +3,21 @@ import type {
     LibraryDirectoryNode,
     LibraryDirectoryNodeSelection,
     LibraryDirectoryVisibilityMode,
-} from '../../core/contracts/directory';
-import type { LibraryHomeCard, LibraryHomeTabView } from '../../core/contracts/homeModel';
-import { homeCardToDirectoryItem } from '../../core/model/directoryItems';
-import { isDirectoryItemHidden, isHideableDirectoryItem } from '../../core/model/directoryVisibility';
+} from '../../core/directory/directory.contract';
+import type { LibraryHomeCard, LibraryHomeTabView } from '../../core/home/homeModel.contract';
+import { homeCardToDirectoryItem } from '../../core/directory/directoryItems';
+import { isDirectoryItemHidden, isHideableDirectoryItem } from '../../core/directory/directoryVisibility';
 import {
     LIBRARY_HOME_SPECIAL_ORDER,
     resolveLibraryHomeSpecial,
     type LibraryHomeCardSource,
     type LibraryHomeSpecialKind,
-} from '../../core/model/homeSpecialCards';
-import { resolveDirectoryRows } from '../../core/model/directoryTree';
-import { cycleIndex } from '../../core/model/homeSources';
-import { resolveDirectoryNodeSelection, resolveNextDirectoryNodeSelectionTarget } from '../../core/model/directoryBatch';
-import type { BravaisItem } from './bravaisLayer';
+} from '../../core/home/homeSpecialCards';
+import { resolveDirectoryRows } from '../../core/directory/directoryTree';
+import { cycleIndex } from '../../core/home/homeSources';
+import { resolveDirectoryNodeSelection, resolveNextDirectoryNodeSelectionTarget } from '../../core/directory/directoryBatch';
+import type { LibraryHomeExtraTab } from '../../core/suite/suite.contract';
+import type { BravaisItem, BravaisSeamTab } from './bravaisLayer';
 import type { BravaisDirectoryRow } from './bravaisHomeModels';
 import { homeCardItemKey, projectHomeCardItem, type HomeCardLabels } from './bravaisProjection';
 
@@ -275,10 +276,46 @@ export const resolveSelectAllState = (selectedCount: number, displayCount: numbe
  * 走 core 的 cycleIndex，与网格 / TUI 的 Tab 循环同一套规则（当前页签被隐藏、不在列表里时，往前从最后一个找起）。
  */
 export const cycleHomeTab = (
-    tabs: readonly Pick<LibraryHomeTabView, 'key' | 'disabledReason'>[],
+    tabs: readonly { key: string; disabledReason?: string }[],
     active: string,
     delta: 1 | -1,
 ): string | null => {
     const index = cycleIndex(tabs, tabs.findIndex(tab => tab.key === active), delta, tab => !tab.disabledReason);
     return index < 0 || tabs[index].key === active ? null : tabs[index].key;
 };
+
+/**
+ * 缝里的一级页签：原生页签，后面接宿主交来的扩展页签（模组的首页页面；id 带模组前缀 `modid:name`，不会与原生的
+ * key 撞上）。选中态以宿主为准：扩展页签开着时原生页签都不算选中，aria-selected 与高亮跟着走。
+ */
+export const projectHomeSeamTabs = (
+    tabs: readonly LibraryHomeTabView[],
+    active: string,
+    extraTabs: readonly Pick<LibraryHomeExtraTab, 'id' | 'label' | 'active'>[] = [],
+): BravaisSeamTab[] => {
+    const extraActive = extraTabs.some(tab => tab.active);
+    return [
+        ...tabs.map(candidate => ({
+            key: candidate.key,
+            label: candidate.label,
+            active: !extraActive && candidate.key === active,
+            disabled: Boolean(candidate.disabledReason),
+        })),
+        ...extraTabs.map(entry => ({ key: entry.id, label: entry.label, active: entry.active, disabled: false })),
+    ];
+};
+
+/**
+ * F6 / Shift+F6 的那一排：原生页签加扩展页签（与网格首页 Tab 循环的 navigationTabs 同一个顺序），当前项是开着的
+ * 扩展页签，没有就是原生的当前页签。返回下一个要选的 key，规则同 cycleHomeTab。
+ */
+export const cycleHomeSeamTab = (
+    tabs: readonly Pick<LibraryHomeTabView, 'key' | 'disabledReason'>[],
+    active: string,
+    extraTabs: readonly Pick<LibraryHomeExtraTab, 'id' | 'active'>[],
+    delta: 1 | -1,
+): string | null => cycleHomeTab(
+    [...tabs, ...extraTabs.map(entry => ({ key: entry.id }))],
+    extraTabs.find(entry => entry.active)?.id ?? active,
+    delta,
+);

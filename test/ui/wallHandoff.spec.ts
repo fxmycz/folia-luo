@@ -8,7 +8,8 @@ import { installBaseState, localImportFixture, mockNeteaseApi, openApp, svgDataU
 // - 降低动态效果时是短淡入淡出交叉（mode = fade），没有合缝 / 翻牌阶段；
 // - 透光档下 visualizer：进 Lattice 时窗关上（closing 结束）之前一直挂着、之后卸载；回来时窗打开（opening）之前已经挂上；
 //   实色档下整个交接都不挂；
-// - grid 下进出 Lattice 不走交接（没有任何 data-wall-handoff），Lattice 照旧整层淡出。
+// - grid 下进出 Lattice 不走交接（没有任何 data-wall-handoff），Lattice 照旧整层淡出；
+// - 工具面板上方队列浮岛的开合偏好（useLatticeSettingsStore）两面墙共用：交接前后照旧展开；Lattice 的 go-home 翻牌回到 #home。
 // installBaseState 默认把所有动效面降级（截图基线要静止画面）；要看翻牌的用例把 lattice 与 collectionMorph 两面放开。
 // 每一帧的状态由页面里的 rAF 采样器记下来（交接只有一秒多，轮询会漏掉中间的阶段）。
 
@@ -372,4 +373,40 @@ test('[bravais] entering Lattice from the playing focus card lands Lattice\'s op
     for (const side of ['x', 'y', 'width', 'height'] as const) {
         expect(Math.abs(latticeCard[side] - homeCard[side]), side).toBeLessThan(2);
     }
+});
+
+test('[bravais] the queue island stays open across the handoff, and the Lattice go-home flips back to #home', async ({ page }) => {
+    await boot(page, { suite: 'bravais', look: 'solid', motion: 'full' });
+    await seedQueue(page);
+    await bravaisSettled(page);
+    // 同一颗按钮，名字随墙变（资料库墙「Wall tools」、Lattice「Lattice tools」）。
+    const tools = page.getByRole('button', { name: /^(Wall|Lattice) tools$/ });
+    const panel = page.getByRole('menu', { name: /^(Wall|Lattice) tools$/ });
+    const island = page.getByRole('region', { name: 'Play queue', exact: true });
+
+    // 资料库墙上展开浮岛，再收起面板（偏好记着展开）。
+    await tools.click();
+    await panel.locator('[data-wall-tools-quick="queue"]').click();
+    await expect(island).toBeVisible();
+    await tools.click();
+    await expect(island).toHaveCount(0);
+
+    // 进 Lattice：同一颗按钮，打开面板时浮岛照旧展开。
+    await setView(page, 'lattice');
+    await expect(stage(page)).toHaveCount(0, { timeout: 10_000 });
+    await expect(latticeRoot(page)).not.toHaveAttribute('data-wall-handoff', /.*/);
+    await tools.click();
+    await expect(island).toBeVisible();
+    await expect(panel.locator('[data-wall-tools-quick="queue"]')).toHaveAttribute('aria-expanded', 'true');
+    await expect(island.locator('.lattice-tools-island-heading')).toHaveText('Play queue · 24 songs');
+
+    // Lattice 的「回到主页」：翻牌回资料库墙，hash 回到 #home；面板收起，偏好仍是展开。
+    await panel.locator('[data-wall-tools-quick="go-home"]').click();
+    await expect(latticeRoot(page)).toHaveCount(0, { timeout: 10_000 });
+    await expect(stage(page)).not.toHaveAttribute('data-wall-handoff', /.*/, { timeout: 10_000 });
+    expect(await page.evaluate(() => window.location.hash)).toBe('#home');
+    await bravaisSettled(page);
+    await tools.click();
+    await expect(island).toBeVisible();
+    expect(await page.evaluate(() => localStorage.getItem('wall_tools_queue_island_open'))).toBe('true');
 });

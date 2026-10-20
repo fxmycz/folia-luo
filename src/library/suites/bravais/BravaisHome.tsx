@@ -1,22 +1,31 @@
 import React, { useCallback } from 'react';
-import type { LibraryHomeSurfaceProps } from '../../core/contracts/suite';
-import type { LibraryHomeTabKey } from '../../core/contracts/homeModel';
-import { isOnlineHomeTab } from '../../core/model/homeSources';
-import { useLibraryHomeSources } from '../../core/bindings/useLibraryHomeSources';
-import { useLibraryHomeOnline } from '../../core/bindings/useLibraryHomeOnline';
-import { useLibraryHomeActions } from '../../core/bindings/useLibraryHomeActions';
-import { useLibraryHomeDirectory } from '../../core/bindings/useLibraryHomeDirectory';
-import { useLibraryHomeTabsRegistration } from '../../core/bindings/useLibraryHomeSurfaceRegistration';
+import type { LibraryHomeSurfaceProps } from '../../core/suite/suite.contract';
+import type { LibraryHomeTabKey } from '../../core/home/homeModel.contract';
+import { isOnlineHomeTab } from '../../core/home/homeSources';
+import { useLibraryHomeSources } from '../../core/home/useLibraryHomeSources';
+import { useLibraryHomeOnline } from '../../core/home/online/useLibraryHomeOnline';
+import { useLibraryHomeActions } from '../../core/home/useLibraryHomeActions';
+import { useLibraryHomeDirectory } from '../../core/home/useLibraryHomeDirectory';
+import { useLibraryHomeTabsRegistration } from '../../core/home/useLibraryHomeSurfaceRegistration';
 import { setBravaisSearchOpen } from './bravaisHomeUiStore';
 import { useBravaisHomeChrome } from './useBravaisHomeChrome';
 import { BravaisHomeLocal, BravaisHomeNavidrome, BravaisHomeOnline } from './BravaisHomeSources';
+import BravaisHomeExplore from './BravaisHomeExplore';
+import BravaisHomeDirectory from './BravaisHomeDirectory';
+import type { LibraryHomeCard } from '../../core/home/homeModel.contract';
+import LuoxueBravaisLayer from '../../../luoxue/components/LuoxueBravaisLayer';
 
 // src/library/suites/bravais/BravaisHome.tsx
-// 首页 surface（B9，设计稿 §10.5）：五个页签（歌单 / 电台 / 专辑 / 本地 / Navidrome）都铺墙。与 TUI、网格用同一套首页
+// 首页 surface（B9，设计稿 §10.5）：六个页签（歌单 / 电台 / 专辑 / 探索 / 本地 / Navidrome）都铺墙；探索按网格探索拼贴的
+// 排法铺（BravaisHomeExplore）。与 TUI、网格用同一套首页
 // 绑定（来源与页签、在线列表、首页资源与动作都来自 core，换 suite 不重新请求），按当前来源挂一个来源组件
 // （BravaisHomeSources），它把当前页签 / section 的卡片投影成首页层推进 stage store；这里自己只渲染一个不可见的锚点。
 // 切页签 = 换首页层（`home:<页签>`）：stage 整墙出场 → 入场；本地四行、Navidrome 的 section 是缝里的二级切换，不换层。
 // 页签条交给首页 surface 句柄（useLibraryHomeTabsRegistration），命令面板的「打开歌单 / 本地…」写的是同一个页签。
+
+/** 洛雪页签的墙是空的（内容由洛雪自己的面板渲染），用模块级常量保持身份稳定，避免层描述无谓地换身份。 */
+const NO_LUOXUE_CARDS: LibraryHomeCard[] = [];
+const ignoreLuoxueCard = () => { };
 
 const BravaisHome: React.FC<LibraryHomeSurfaceProps> = (props) => {
     const {
@@ -46,20 +55,23 @@ const BravaisHome: React.FC<LibraryHomeSurfaceProps> = (props) => {
     const selectTab = useCallback((key: LibraryHomeTabKey) => {
         const target = tabs.find(candidate => candidate.key === key);
         if (!target || target.disabledReason) return false;
+        props.onNativeTabSelected?.();
         setBravaisSearchOpen(false);
         setTab(key);
         return true;
-    }, [setTab, tabs]);
-    useLibraryHomeTabsRegistration({ getState: () => ({ active: tab, tabs }), setTab: selectTab });
+    }, [setTab, tabs, props.onNativeTabSelected]);
 
     const chrome = useBravaisHomeChrome({
         tab,
         tabs,
+        providerId: online.providerId,
         selectTab,
         scanPercent,
         scanning: Boolean(actionState.scan?.active),
         props,
     });
+    // F6 的循环也交给句柄：模组的首页页面盖住首页时墙的按键监听让出，页面里按 F6 经句柄接着循环。
+    useLibraryHomeTabsRegistration({ getState: () => ({ active: tab, tabs }), setTab: selectTab, cycleTab: chrome.cycleTab });
     const tabLabel = (key: LibraryHomeTabKey) => tabs.find(candidate => candidate.key === key)?.label ?? key;
     const common = {
         chrome,
@@ -79,7 +91,16 @@ const BravaisHome: React.FC<LibraryHomeSurfaceProps> = (props) => {
             aria-hidden
             className="pointer-events-none absolute inset-0"
         >
-            {isOnlineHomeTab(tab) ? (
+            {tab === 'explore' ? (
+                <BravaisHomeExplore
+                    chrome={chrome}
+                    online={online}
+                    account={account}
+                    isInteractive={isInteractive}
+                    onPlaySong={props.onPlaySong}
+                    onOpenGridView={onOpenGridView}
+                />
+            ) : isOnlineHomeTab(tab) ? (
                 <BravaisHomeOnline {...common} tab={tab} online={online} list={onlineList} account={account} />
             ) : tab === 'local' ? (
                 <BravaisHomeLocal
@@ -93,6 +114,30 @@ const BravaisHome: React.FC<LibraryHomeSurfaceProps> = (props) => {
                     treesResource={homeResources.localDirectoryTrees}
                     directoryActions={directoryActions}
                 />
+            ) : tab === 'luoxue' ? (
+                // 洛雪页签也必须注册一个首页层：缝（页签条 + 底部停靠格，含「队列拼贴」）与墙都是 stage 从层描述里
+                // 渲染的。原先只挂面板、不注册层，导致冷启动直接落在洛雪时 stage 里没有任何层——整条缝都不出现
+                // （歌单 / 电台 / 专辑点不到，「队列拼贴」格也不见）。这里推一个空卡片的层把缝恢复出来，
+                // 洛雪自己的面板再用 z-1 盖在空墙之上、缝之下（见 LuoxueBravaisLayer）。
+                <>
+                    <BravaisHomeDirectory
+                        {...common}
+                        layerKey="home:luoxue"
+                        source="luoxue"
+                        section="luoxue"
+                        items={NO_LUOXUE_CARDS}
+                        isLoading={false}
+                        meta={tabLabel('luoxue')}
+                        panelTitle={tabLabel('luoxue')}
+                        onOpen={ignoreLuoxueCard}
+                    />
+                    <LuoxueBravaisLayer
+                        onPlaySong={props.onPlaySong}
+                        onAddSongToQueue={props.onAddSongToQueue}
+                        onAddAllToQueue={props.onAddAllToQueue}
+                        isInteractive={isInteractive}
+                    />
+                </>
             ) : (
                 <BravaisHomeNavidrome {...common} meta={tabLabel('navidrome')} overview={homeResources.navidromeOverview} />
             )}

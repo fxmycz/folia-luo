@@ -10,7 +10,7 @@ import {
     FoldHorizontal,
     Library,
     ListFilter,
-    LogOut,
+    ListMusic,
     MicVocal,
     MonitorPlay,
     MoreHorizontal,
@@ -24,7 +24,7 @@ import {
     X,
 } from 'lucide-react';
 import PonderSurfaceStateLayer, { PonderSurfaceBase, type PonderSurfaceStateRegistrar } from './PonderSurfaceStateLayer';
-import { relativeRectStyle } from './ponderSurfaceGeometry';
+import { relativeRectStyle } from './relativeRectStyle';
 import {
     BRAVAIS_HOME_DOCK,
     BRAVAIS_HOME_DOCK_STAGE,
@@ -74,7 +74,7 @@ type HomeSeamOptions = {
     local?: boolean;
     stage?: boolean;
     filtering?: boolean;
-    popup?: 'account' | 'menu';
+    popup?: 'menu';
 };
 
 const ShortcutColumns: React.FC<{ rect: typeof H.shortcuts; counts: readonly number[]; rule: boolean; outline: string }> = ({ rect, counts, rule, outline }) => (
@@ -158,31 +158,6 @@ const HomeSeam: React.FC<{ colors: BravaisSeamColors; options: HomeSeamOptions }
             <SeamIcon rect={dock.queue} icon={PanelsTopLeft} marker="data-ponder-bravais-tool-queue" />
             <SeamIcon rect={dock.more} icon={MoreHorizontal} marker="data-ponder-bravais-tool-more" pressed={options.popup === 'menu'} accent={accent} outline={outline} />
 
-            {options.popup === 'account' && (
-                <div
-                    data-ponder-bravais-account-popup
-                    className="flex flex-col justify-evenly rounded-[10px] px-[7%] shadow-2xl"
-                    style={{ ...relativeRectStyle(H.accountPopup), backgroundColor: BRAVAIS_SEAM_POPUP, boxShadow: `0 0 0 1px ${outline}, 0 10px 30px rgba(0,0,0,0.5)` }}
-                >
-                    {[0, 1, 2, 3].map(index => {
-                        const current = index === 0;
-                        return (
-                            <span key={index} className="flex items-center gap-[8%]">
-                                <span
-                                    className="aspect-square w-[22%] shrink-0 rounded-full"
-                                    style={{ backgroundColor: index === 0 ? accent : line, opacity: current ? 0.9 : 0.6, boxShadow: current ? `0 0 0 2px ${line}` : undefined }}
-                                />
-                                <span className="flex min-w-0 flex-1 flex-col gap-[3px]">
-                                    <TextBar width={`${80 - index * 8}%`} color={line} className="h-1" />
-                                    {index !== 3 && <TextBar width="48%" color={line} className="h-[3px]" opacity={0.5} />}
-                                </span>
-                                {current && <LogOut data-ponder-bravais-logout className="h-3 w-3 shrink-0 opacity-75" />}
-                            </span>
-                        );
-                    })}
-                </div>
-            )}
-
             {options.popup === 'menu' && (
                 <div
                     data-ponder-bravais-menu
@@ -257,12 +232,11 @@ const ToolsPanel: React.FC<{ colors: BravaisSeamColors }> = ({ colors }) => {
             className="rounded-[14px] border"
             style={{ ...relativeRectStyle(T.panel), borderColor: outline, backgroundColor: 'rgb(24,24,27)', boxShadow: '0 16px 40px rgba(0,0,0,0.5)' }}
         >
-            {/* 一排一次性动作：定位正在播放、打乱队列、生成主题、前往 Lattice。 */}
-            <div data-ponder-bravais-tools-quick className="grid grid-cols-4 gap-[4%]" style={relativeRectStyle(T.quick)}>
-                {[Crosshair, Shuffle, Sparkles, PanelsTopLeft].map((Icon, index) => (
-                    <span key={index} className="flex flex-col items-center justify-center gap-[10%] rounded-[10px]" style={{ backgroundColor: 'rgba(255,255,255,0.06)' }}>
+            {/* 一排纯图标的一次性动作：定位正在播放、打乱队列、生成主题、播放队列、前往 Lattice、前往播放页。 */}
+            <div data-ponder-bravais-tools-quick className="grid grid-cols-6 gap-[3%]" style={relativeRectStyle(T.quick)}>
+                {[Crosshair, Shuffle, Sparkles, ListMusic, PanelsTopLeft, Disc3].map((Icon, index) => (
+                    <span key={index} className="flex items-center justify-center rounded-[8px]" style={{ backgroundColor: 'rgba(255,255,255,0.06)' }}>
                         <Icon className="h-3.5 w-3.5 opacity-80" />
-                        <TextBar width="56%" color={line} className="h-1" />
                     </span>
                 ))}
             </div>
@@ -309,15 +283,6 @@ const PonderBravaisHomeSeamSurface: React.FC<PonderBravaisHomeSeamSurfaceProps> 
             {/* 换页签：整条信息条翻一次，墙整面换成本地那一页（同样的格子，换一批磁贴）。 */}
             <PonderSurfaceStateLayer state="home-local" registerStateNode={registerStateNode} replaces>
                 <HomeView colors={colors} options={{ tab: LOCAL_TAB, local: true }} wall="b" />
-            </PonderSurfaceStateLayer>
-
-            <PonderSurfaceStateLayer state="account-open" registerStateNode={registerStateNode} replaces>
-                <HomeView colors={colors} options={{ tab: ONLINE_TAB, popup: 'account' }} />
-            </PonderSurfaceStateLayer>
-
-            {/* 平台列表收起：回到和最开始一样的那一屏（列表画在那一屏里，收起就是换回去）。 */}
-            <PonderSurfaceStateLayer state="base-again" registerStateNode={registerStateNode} replaces>
-                <HomeView colors={colors} options={{ tab: ONLINE_TAB }} />
             </PonderSurfaceStateLayer>
 
             <PonderSurfaceStateLayer state="menu-open" registerStateNode={registerStateNode} replaces>

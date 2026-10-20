@@ -3,10 +3,11 @@ import {
     getActiveGridViewCollection,
     isCollectionPop,
     notifyCollectionPop,
+    subscribeCollectionOpen,
     subscribeCollectionPop,
     useCollectionNavigationStore,
 } from '@/stores/useCollectionNavigationStore';
-import type { GridViewCollectionDescriptor } from '@/library/core/contracts/collection';
+import type { GridViewCollectionDescriptor } from '@/library/core/collection/collection.contract';
 
 // test/unit/stores/collectionNavigationStore.test.ts
 // 导航栈「不许压一份当前层的副本」这条规则：详情页里的卡片带着自己所属集合的入口
@@ -154,5 +155,39 @@ describe('collection pop notification', () => {
         unsubscribe();
         notifyCollectionPop(null);
         expect(seen).toHaveBeenCalledTimes(1);
+    });
+});
+
+// 「显式打开了集合」：openRoot 与真的压了新一层的 push 通知，store 已经是新快照；历史恢复、清空、noop / back 不通知。
+// 盖在首页上的模组首页页面据此让开（components/app/home/foliumHomePageDismissal）。
+describe('collection open notification', () => {
+    beforeEach(() => {
+        useCollectionNavigationStore.setState({ snapshot: null });
+    });
+
+    it('notifies after openRoot and an actual push, and not for restores, clears, noops or backs', () => {
+        const seen = vi.fn((snapshot: unknown) => {
+            expect(useCollectionNavigationStore.getState().snapshot).toBe(snapshot);
+        });
+        const unsubscribe = subscribeCollectionOpen(seen);
+        const store = useCollectionNavigationStore.getState();
+
+        const root = store.openRoot(album(1), 'player');
+        expect(seen).toHaveBeenCalledTimes(1);
+        expect(seen).toHaveBeenLastCalledWith(root);
+        const pushed = store.push(artist(2));
+        expect(seen).toHaveBeenCalledTimes(2);
+        expect(seen).toHaveBeenLastCalledWith(pushed.kind === 'push' ? pushed.snapshot : null);
+
+        expect(store.push(artist(2)).kind).toBe('noop');
+        expect(store.push(album(1)).kind).toBe('back');
+        store.restore({ origin: 'home', stack: [album(1), artist(2), album(3)] });
+        store.restore(null);
+        store.clear();
+        expect(seen).toHaveBeenCalledTimes(2);
+
+        unsubscribe();
+        store.openRoot(album(4), 'search');
+        expect(seen).toHaveBeenCalledTimes(2);
     });
 });

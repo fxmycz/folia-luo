@@ -46,7 +46,7 @@ describe('extractFacts', () => {
 
 describe('parseQr', () => {
     it('parses the diagnostics block produced by the app', () => {
-        expect(parseQr('[QR login] qq login failed', qrReport('0.7.10'))).toEqual({ provider: 'qq', appVersion: '0.7.10', failure: 'check-error', hasDiagnostics: true });
+        expect(parseQr('[QR login] qq login failed', qrReport('0.7.10'))).toEqual({ provider: 'qq', appVersion: '0.7.10', failure: 'check-error', build: null, origin: null, hasDiagnostics: true });
     });
 
     it('recognizes the paste-hint variant without diagnostics', () => {

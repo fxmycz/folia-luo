@@ -87,7 +87,7 @@ export const countAppliedSegmentationLines = (
     }, 0);
 };
 
-/** Current split of every line, whether it comes from the record or from Intl.Segmenter. */
+/** Current split of every line, whether it comes from the record or from the default segmenter. */
 export const buildSegmentationBoundaries = (lyrics: LyricData): string[][] => (
     lyrics.lines.map(line => segmentLyricWords(line).map(part => part.segment))
 );

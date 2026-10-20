@@ -113,6 +113,16 @@ export function renderDiagnosisComment({ at, reportHash, section }) {
 
 const CLOSE_TEXT = {
     'qr-aggregate': ({ target }) => `这份扫码登录诊断与 #${target} 属于同一类问题，已合并到 #${target} 统一跟踪。如果你认为是不同的问题，请直接回复说明。`,
+    'web-deployment': ({ causes }) => [
+        '这份诊断来自自行部署的网页版：登录失败是因为这个网站没有配置音乐平台的 API 服务，或者连不上它。这是部署配置问题，不是 Folia 本身的 bug，已关闭。',
+        '如果你只是在使用别人部署的网站，请把诊断报告交给这个网站的部署者；如果你就是部署者，可以按下面的步骤处理：',
+        ...causes.map(cause => `**${cause.title}**\n${cause.steps.map((step, n) => `${n + 1}. ${step}`).join('\n')}`),
+        '在官方版本（[GitHub Releases](https://github.com/chthollyphile/folia-major/releases) 的桌面版，或官方 Docker 镜像）上也能复现的话，请用官方版本重新生成诊断后回复，维护者会复核。',
+    ].join('\n\n'),
+    'unofficial-build': () => [
+        '诊断报告显示这不是 Folia 仓库 CI 构建的官方版本，也不是文档里的自部署方式（`build: unofficial`），可能是他人打包、fork 或修改过的版本，本仓库无法排查其中的问题，已关闭。',
+        '请向提供这个版本的人反馈。如果在官方版本（[GitHub Releases](https://github.com/chthollyphile/folia-major/releases) 的桌面版，或官方 Docker 镜像）上也能复现，请用官方版本重新生成诊断后回复，维护者会复核。',
+    ].join('\n\n'),
     duplicate: ({ target }) => `该 issue 与 #${target} 重复，已关闭，请在 #${target} 继续讨论。`,
     invalid: () => '该 issue 没有有效内容，已关闭。请按模板重新填写后回复，或重新提交。',
     out_of_scope: ({ topicDescription }) => `该请求属于「${topicDescription}」，超出 Folia 项目范围，已关闭。`,

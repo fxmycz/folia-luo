@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useStatusMessage } from '../../../stores/useStatusMessageStore';
 import { useThemeSettingsStore } from '../../../stores/useThemeSettingsStore';
@@ -19,6 +19,7 @@ export const useAppDialogsModel = (deps: AppDialogsDeps) => {
     const isDaylight = useThemeSettingsStore(state => state.isDaylight);
     const currentSong = usePlaybackStore(state => state.currentSong);
     const wallpaperEntryConfirmDialog = useWallpaperEntryConfirmDialog(isDaylight);
+    const closeConfirmDialog = useWindowCloseConfirmDialog(isDaylight);
 
     return useMemo(() => buildAppDialogsModel({
         ...deps,
@@ -26,10 +27,11 @@ export const useAppDialogsModel = (deps: AppDialogsDeps) => {
         isDaylight,
         currentSong,
         wallpaperEntryConfirmDialog,
+        closeConfirmDialog,
         // Spread rather than `deps`: the caller passes an object literal, so depending on the object
         // would rebuild this every render. The key set is fixed by the call site.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }), [...Object.values(deps), statusMsg, isDaylight, currentSong, wallpaperEntryConfirmDialog]);
+    }), [...Object.values(deps), statusMsg, isDaylight, currentSong, wallpaperEntryConfirmDialog, closeConfirmDialog]);
 };
 
 /**
@@ -49,5 +51,39 @@ export const useWallpaperEntryConfirmDialog = (isDaylight: boolean) => {
         confirmText: t('options.wallpaperEnterConfirmAction'),
         onConfirm: () => useDesktopSettingsStore.getState().confirmWallpaperEntry(),
         onClose: () => useDesktopSettingsStore.getState().cancelWallpaperEntry(),
+    }), [isOpen, isDaylight, t]);
+};
+
+/**
+ * Props for the titlebar X's "cancel / hide / quit?" dialog, plus the subscription that opens it.
+ * The main process still owns the decision (wallpaper mode, close-to-tray, whether a tray icon
+ * exists) and asks the renderer through `window-close:prompt`; this hook is only the presentation,
+ * replacing the native message box that looked nothing like the rest of the app.
+ *
+ * The dialog's own X and the backdrop land on `onCancel` - the same as its Cancel button - so the
+ * quiet paths never hide or quit by accident.
+ */
+export const useWindowCloseConfirmDialog = (isDaylight: boolean) => {
+    const { t } = useTranslation();
+    const isOpen = useDesktopSettingsStore(state => state.closeConfirmOpen);
+
+    useEffect(() => {
+        // The browser build has no bridge and no titlebar X, so there is nothing to listen for.
+        return window.electron?.onWindowClosePrompt?.(() => {
+            useDesktopSettingsStore.getState().requestCloseConfirm();
+        });
+    }, []);
+
+    return useMemo(() => ({
+        isOpen,
+        isDaylight,
+        title: t('options.closeConfirmTitle'),
+        description: t('options.closeConfirmDesc'),
+        cancelText: t('options.closeConfirmCancel'),
+        hideText: t('options.closeConfirmHide'),
+        quitText: t('options.closeConfirmQuit'),
+        onCancel: () => useDesktopSettingsStore.getState().cancelCloseConfirm(),
+        onHide: () => useDesktopSettingsStore.getState().confirmCloseHide(),
+        onQuit: () => useDesktopSettingsStore.getState().confirmCloseQuit(),
     }), [isOpen, isDaylight, t]);
 };

@@ -1,8 +1,11 @@
 import React, { memo, useLayoutEffect, useRef, useState, type MouseEvent, type MutableRefObject } from 'react';
 import { WallTitle } from '../../../components/wall/WallTitle';
 import { useWallPosterArtwork } from '../../../components/wall/useWallPosterArtwork';
+import { parseWallSlotKey } from '../../../components/wall/wallSlots';
 import { countRender } from '../../../dev/renderCount';
+import { getSizedCoverUrl } from '../../../utils/coverUrl';
 import {
+    BRAVAIS_ALBUM_COVER_PX,
     BRAVAIS_METRICS,
     BRAVAIS_REDUCED_FADE_MS,
     BRAVAIS_TILE_FLIP_IN_MS,
@@ -14,6 +17,8 @@ import { bravaisFaceKey, type BravaisTileKind } from './bravaisLook';
 import BravaisFocusCardBody, { type BravaisFocusCardActions } from './BravaisFocusCardBody';
 import BravaisTileMarks, { BravaisTileBadge } from './BravaisTileMarks';
 import { useBravaisArtistTone } from './bravaisArtistTone';
+import { noteCoverFlightSource } from './bravaisCoverFlight';
+import { BRAVAIS_ALBUM_MOSAIC_PX, mosaicPlacement, shardPlacement, useBravaisCoverSpots } from './bravaisAlbumWall';
 import { resolveBravaisTileForm } from './bravaisTileForm';
 import './bravaisTileKinds.css';
 import { getWaveStagger, WALL_WAVE_IN_MS, WALL_WAVE_LIFT, WALL_WAVE_OUT_MS } from './bravaisWallWave';
@@ -35,8 +40,22 @@ import { getWaveStagger, WALL_WAVE_IN_MS, WALL_WAVE_LIFT, WALL_WAVE_OUT_MS } fro
 // 页边（叠页边，内容层自己的 box-shadow，画在磁贴间距里、不占内容面积；设置可关，stage 根节点挂 has-stack-edges），
 // 曲目数并进左上角的类型标签（「歌单 · 124」，投影时写好）；歌手是双色调人像（亮端取自头像，bravaisArtistTone），
 // 悬停 / 键盘焦点 / 正在播放时恢复原色；歌曲不变。叠页边与人像都在内容层上，翻牌时一起转；全透明档歌手不做双色调。
+// 专辑墙（has-album-wall）：曲目按 item.coverArt 画成整面墙拼贴的一块或封面碎片（bravaisAlbumWall，bravaisAlbumPoster.css）。
 
 export type BravaisTileRect = { x: number; y: number; width: number; height: number };
+
+/**
+ * 指针最后一次真的移动到的位置。墙在指针底下动（海报倾斜转回正、相机补间）时，浏览器也会对新转到指针下的磁贴发
+ * mouseenter；那不是悬停，不该去高亮、滚动列表面板。真的移进一张磁贴时，mouseenter 先于这次 mousemove 派发，
+ * 坐标与这里记的不同；墙自己动过来的，坐标与这里记的相同。
+ */
+let lastPointer: { x: number; y: number } | null = null;
+if (typeof window !== 'undefined') {
+    window.addEventListener('mousemove', (event) => { lastPointer = { x: event.clientX, y: event.clientY }; }, { passive: true, capture: true });
+}
+const pointerStayed = (event: MouseEvent<HTMLElement>) => (
+    lastPointer !== null && lastPointer.x === event.clientX && lastPointer.y === event.clientY
+);
 
 export type BravaisTileHandlers = BravaisFocusCardActions & {
     /** 点了这张磁贴（拖动后的残余点击已在外面吞掉）。 */
@@ -221,9 +240,14 @@ function BravaisTile({
     // B11 整墙入场：只按 token 认（入场途中的数据更新沿用同一个 entrance，不重启）。已经在放的翻牌 / 波次让给它；
     // 落回之前保持抬起（fill backwards），刚挂载的磁贴也一样落回。入场窗口过了才挂载的不动。
     const entranceToken = entrance?.token ?? null;
+    // 挂载时（第一次渲染）带着的入场：按它认「这次入场时刚挂载」。不按 effect 跑没跑过认——StrictMode 挂载后会卸载
+    // 再挂载一遍（清理会取消落回），重放时仍要认作挂载、重新排落回。
+    const mountEntranceTokenRef = useRef(entranceToken);
     useLayoutEffect(() => {
         const face = faceRef.current;
         if (!entrance || !face) return;
+        // 只给这一刻挂载的磁贴（探索页原地重排：留在原地的不动，正在放的入场也不打断）。
+        if (entrance.mountsOnly && entrance.token !== mountEntranceTokenRef.current) return;
         const now = performance.now();
         if (now >= entrance.until) return;
         const stagger = entrance.reduced ? 0 : getWaveStagger(rect, entrance.corner, BRAVAIS_METRICS);
@@ -254,6 +278,8 @@ function BravaisTile({
     );
     const isTrack = display?.kind === 'track';
     const isWindow = face.kind === 'window';
+    // 探索形状的 section 标题：只有字（序号、标题、这一段有几项哪几种），不能点、不进键盘走位（它不是条目）。
+    const isHeading = face.kind === 'heading';
     const cover = display ? (coverUrl ? `url("${coverUrl}")` : fallbackBackground(display.key)) : undefined;
     const isCurrent = Boolean(display && nowPlayingKey && display.key === nowPlayingKey);
     const isExpanded = expanded && isTrack;
@@ -264,12 +290,29 @@ function BravaisTile({
     const portraitWanted = isPortrait && !face.seeThrough;
     const tone = useBravaisArtistTone(display?.coverUrl, portraitWanted);
     const drawsPortrait = portraitWanted && tone !== false;
+    // 专辑墙（has-album-wall）：整面墙拼成的那一块，或从封面上切下来的碎片（bravaisAlbumWall）。聚焦卡画整张封面。
+    const art = display && !face.seeThrough && !isExpanded ? display.coverArt : undefined;
+    const artSpots = useBravaisCoverSpots(art?.mode === 'shard' ? art.url : undefined);
+    const artUrl = useWallPosterArtwork(
+        art?.url,
+        (art?.mode === 'mosaic' ? BRAVAIS_ALBUM_MOSAIC_PX : Math.max(rect.width, rect.height) * 2.75) * pixelScale,
+    );
+    // 拼贴的大图到之前垫一张海报封面那档（已经在缓存里，放大后是糊的）：两层背景，大图解码完就盖住它。
+    const artStandIn = art?.mode === 'mosaic' ? getSizedCoverUrl(art.url, BRAVAIS_ALBUM_COVER_PX) : '';
+    const artImage = artStandIn && artStandIn !== artUrl ? `url("${artUrl}"), url("${artStandIn}")` : `url("${artUrl}")`;
+    const artPlacement = !art || !display
+        ? null
+        : art.mode === 'mosaic' ? mosaicPlacement(rect, parseWallSlotKey(slotKey) ?? { column: 0, row: 0 }) : artSpots ? shardPlacement(artSpots, display.key, rect) : null;
 
     const handleClick = (event: MouseEvent<HTMLElement>) => {
         if (event.target instanceof Element && event.target.closest('button')) return;
         if (didDragRef.current) {
             didDragRef.current = false;
             return;
+        }
+        // 点专辑：记下这张封面此刻的样子，真打开了专辑，封面从这里飞到专辑海报上（bravaisCoverFlight）。
+        if (display?.kind === 'album' && event.currentTarget.parentElement) {
+            noteCoverFlightSource(event.currentTarget.parentElement, display.key, slotKey, display.coverUrl);
         }
         handlers.activate(slotKey);
     };
@@ -287,10 +330,10 @@ function BravaisTile({
             className={`bravais-tile${isExpanded ? ' is-expanded' : ''}${keyboardFocused ? ' is-focused' : ''}`}
             style={style}
             data-bravais-slot={slotKey}
-            data-bravais-kind={isWindow ? 'window' : display?.kind ?? 'wall'}
+            data-bravais-kind={isWindow ? 'window' : isHeading ? 'heading' : display?.kind ?? 'wall'}
             data-bravais-see-through={face.seeThrough || undefined}
             data-library-entry={isTrack ? display?.key : undefined}
-            data-library-card={display && !isTrack ? display.key : undefined}
+            data-library-card={display && !isTrack && !isHeading ? display.key : undefined}
             data-bravais-focused={keyboardFocused || undefined}
             data-bravais-expanded={isExpanded || undefined}
             data-bravais-current={isCurrent || undefined}
@@ -299,21 +342,33 @@ function BravaisTile({
             data-bravais-hidden={display?.hidden || undefined}
             data-bravais-special={display?.special}
             data-bravais-form={display && form !== 'poster' ? form : undefined}
-            onMouseEnter={() => handlers.hover(slotKey)}
+            onMouseEnter={(event) => {
+                if (!pointerStayed(event)) handlers.hover(slotKey);
+            }}
             onMouseLeave={() => handlers.hover(null)}
         >
             <article
                 ref={faceRef}
-                className={`lattice-poster bravais-tile-face${display ? '' : isWindow ? ' is-window' : ' is-wall'}${face.seeThrough ? ' is-see-through' : ''}${isExpanded ? ' is-expanded' : ''}${keyboardFocused ? ' is-focused' : ''}${isCurrent ? ' is-current' : ''}${display?.unavailable ? ' is-unavailable' : ''}${linked && display ? ' is-linked' : ''}${display?.dimmed ? ' is-dimmed' : ''}${display?.selected ? ' is-selected' : ''}${isStack ? ' is-stack' : ''}${isPortrait ? ' is-portrait' : ''}`}
-                style={display && !face.seeThrough ? { backgroundImage: cover } : undefined}
-                role={display ? (isExpanded ? 'group' : 'button') : undefined}
+                className={`lattice-poster bravais-tile-face${isHeading ? ' is-heading' : display ? '' : isWindow ? ' is-window' : ' is-wall'}${face.seeThrough ? ' is-see-through' : ''}${isExpanded ? ' is-expanded' : ''}${keyboardFocused ? ' is-focused' : ''}${isCurrent ? ' is-current' : ''}${display?.unavailable ? ' is-unavailable' : ''}${linked && display ? ' is-linked' : ''}${display?.dimmed ? ' is-dimmed' : ''}${display?.selected ? ' is-selected' : ''}${isStack ? ' is-stack' : ''}${isPortrait ? ' is-portrait' : ''}`}
+                style={display && !face.seeThrough && !isHeading ? { backgroundImage: cover } : undefined}
+                data-bravais-art={art?.mode}
+                role={display && !isHeading ? (isExpanded ? 'group' : 'button') : undefined}
                 aria-label={display ? `${display.title} · ${display.subtitle}${display.trackCountLabel ? ` · ${display.trackCountLabel}` : ''}` : undefined}
                 aria-expanded={isTrack ? isExpanded : undefined}
                 tabIndex={-1}
                 onMouseDown={isWindow ? preventFocus : undefined}
                 onClick={handleClick}
             >
-                {display && (
+                {display && isHeading && (
+                    <>
+                        <BravaisTileBadge item={display} current={false} />
+                        <span className="lattice-poster-copy">
+                            {display.title && <WallTitle title={display.title} expanded={false} targetPosterWidth={rect.width} maxLines={2} />}
+                            {display.subtitle && <small>{display.subtitle}</small>}
+                        </span>
+                    </>
+                )}
+                {display && !isHeading && (
                     <>
                         {drawsPortrait && (
                             <span
@@ -322,6 +377,20 @@ function BravaisTile({
                                 style={tone ? { '--bravais-duo-light': tone } as React.CSSProperties : undefined}
                             >
                                 <i style={{ backgroundImage: cover }} />
+                            </span>
+                        )}
+                        {art && artPlacement && artUrl && (
+                            <span
+                                className="bravais-tile-art"
+                                data-bravais-art={art.mode}
+                                style={{
+                                    '--bravais-art-image': artImage,
+                                    '--bravais-art-size': `${artPlacement.size.toFixed(1)}px`,
+                                    '--bravais-art-x': `${artPlacement.x.toFixed(1)}px`,
+                                    '--bravais-art-y': `${artPlacement.y.toFixed(1)}px`,
+                                } as React.CSSProperties}
+                            >
+                                <i />
                             </span>
                         )}
                         <span className="lattice-poster-shade" />

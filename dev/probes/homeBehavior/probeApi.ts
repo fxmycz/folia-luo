@@ -1,7 +1,7 @@
 import type { ProbeFault } from '../libraryBehavior/fakeProviders';
 import type { ProbeRefreshKind } from '../libraryBehavior/probeGates';
 import type { ProbeCall, ProbeRequest } from '../libraryBehavior/probeLog';
-import type { LibraryDirectoryBatchActionId, LibraryDirectorySurfaceState, LibraryDirectoryVisibilityMode } from '../../../src/library/core/contracts/directory';
+import type { LibraryDirectoryBatchActionId, LibraryDirectorySurfaceState, LibraryDirectoryVisibilityMode } from '../../../src/library/core/directory/directory.contract';
 
 // dev/probes/homeBehavior/probeApi.ts
 // 首页行为探针挂在 window 上的驱动接口。只有类型：component 用例 import 它不会把探针运行时带进 Node。
@@ -175,7 +175,7 @@ export type HomeProbeApi = {
     setLattice: (enabled: boolean) => void;
 
     // ---- suite ----
-    /** 选中的 suite（core/state/useLibrarySuiteStore）。 */
+    /** 选中的 suite（core/suite/useLibrarySuiteStore）。 */
     suite: () => string;
     /** 此刻渲染首页的 suite（选中的 suite 没实现首页时是网格）。 */
     homeSuite: () => string;
@@ -203,10 +203,10 @@ export type HomeProbeApi = {
     /** fb3：「播放后进入的视图」（与设置页、命令面板同一个 setter）。 */
     setEntryView: (view: 'player' | 'lattice' | 'stay') => void;
     /**
-     * bravais 工具面板的宿主端口（probeStageTools）：摆可用性（合并；null 复位成「没有歌」）。生成主题、洗牌、音量预览
-     * 只记账（generateTheme / shuffleQueue / previewVolume）。
+     * 墙面工具面板的假宿主（probeWallToolsHost）：摆可用性（合并；null 复位成「没有歌」）。生成主题、洗牌、音量预览、
+     * 前往播放页与队列编辑只记账（generateTheme / shuffleQueue / previewVolume / openPlayer / playQueueSong …）。
      */
-    setStageTools: (snapshot: { themeGeneration?: 'ready' | 'busy' | 'unavailable'; canShuffleQueue?: boolean } | null) => void;
+    setWallToolsHost: (snapshot: { themeGeneration?: 'ready' | 'busy' | 'unavailable'; canShuffleQueue?: boolean } | null) => void;
     /** 应用的音量 store（useAudioSettingsStore：播放条、播放页面板、工具面板读写的同一份）。 */
     volume: () => { volume: number; isMuted: boolean };
 

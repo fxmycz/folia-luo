@@ -321,6 +321,43 @@
 .bravais-seam-tools .bravais-seam-icon.is-wide svg { width: 16px; height: 16px; flex: none; }
 .bravais-seam-tools .bravais-seam-icon.is-wide .is-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .bravais-seam-home.is-compact .bravais-seam-tools .bravais-seam-icon.is-wide { width: 36px; padding: 0; }
+/* 提示点（设置：发现新版本，只在书脊上画）：图标右上角一个强调色的点，落在图标外框与图形之间的空白里，不压图形。 */
+.bravais-seam-tools .bravais-seam-icon[data-bravais-badge] { position: relative; }
+.bravais-seam-tools .bravais-seam-icon .is-badge {
+    position: absolute;
+    top: 7px;
+    right: 7px;
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: var(--text-accent, #f59e0b);
+    pointer-events: none;
+}
+.bravais-seam-home.is-compact .bravais-seam-tools .bravais-seam-icon .is-badge { top: 6px; right: 6px; }
+/* 窄缝里工具格下方的说明（设置：发现新版本）：一颗强调色的点 + 短字，可点（等同点设置格）。
+   前缀 .bravais-seam：压过 .bravais-seam button 的 font: inherit。 */
+.bravais-seam .bravais-seam-notice {
+    display: inline-flex;
+    max-width: 100%;
+    margin-top: 10px;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: color-mix(in srgb, currentColor 8%, transparent);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.3;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.bravais-seam .bravais-seam-notice:hover {
+    border-color: color-mix(in srgb, currentColor 26%, transparent);
+    background: color-mix(in srgb, currentColor 16%, transparent);
+}
+.bravais-seam-notice .is-dot { width: 6px; height: 6px; flex: none; border-radius: 999px; background: var(--text-accent, #f59e0b); }
+.bravais-seam-notice .is-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 /* fb8（用户实测：菜单像是透明的，后面的账户入口透出来、字叠在一起）：根因是层级——fb4 起账户位 position: relative +
    z-index: 3，工具格没有层级，菜单的 z-index 只在窄缝这一层里和账户位比，被账户入口盖住（菜单底色本身一直不透明，
@@ -630,3 +667,23 @@
 .bravais-seam-menu.is-home button.is-shortcut svg { color: var(--text-accent, currentColor); opacity: 1; }
 
 :root[data-reduce-motion~='lattice'] .bravais-seam-home .bravais-seam-shortcut { transition: none; }
+
+/* 洛雪页签加入后一级页签从 4 个变 5 个：窗口偏矮时「折叠位 + 5 格页签 + 中段 + 直达入口」的总高会比导航区（唯一可
+   伸缩的那一段，flex: 1 100 auto）多出一格页签的高度，最后一个页签被挤出导航区的可视范围——滚轮/键盘还够得着，
+   鼠标点不到（看起来就是「别的页签点不动了」）。这里在「窗口偏矮」且「确实有 5 个页签」两件事同时成立时，把页签列
+   与页头各处的间距压一档，把第 5 个换回可视区内；页签仍是 4 个时（folia 原来的样子）一个字节都不动。
+   判定只用窗口高度（媒体查询）与页签个数（:has）这两个与本次重排无关的量，不用测量结果（.is-overflowing /
+   has-short-tabs）：压下去的高度会反过来改变那些测量，按它们判定会在两级之间来回跳。
+   省下的高度（窄缝时页签是竖排的一个字，高 = 行高 + 上下内边距 + 2px 描边）：内边距 5→2 省 6px、行高 1.15→1.05
+   省约 1.2px，5 格共省约 36px；页签列间距 4→2 再省 8px；折叠位与中段各收一档省 12~20px。合计约 55px，而实测这条缝
+   偏矮时溢出 44px（clientHeight 156 / scrollHeight 200），留了一点余量；万一仍不够，导航区本就会滚（原有行为）。
+   测量副本（.bravais-seam-home-measure 里那份全名页头）也在这套选择器里，跟着一起收紧——级别判定与真实渲染必须用
+   同一身尺寸，两边不一致才会在两级之间来回跳。 */
+@media (max-height: 720px) {
+    .bravais-seam-home .bravais-seam-tabs:has(> :nth-child(5)) { gap: 2px; }
+    .bravais-seam-home .bravais-seam-tabs:has(> :nth-child(5)) > .bravais-seam-home-tab { padding-block: 2px; line-height: 1.05; }
+    .bravais-seam-home:has(.bravais-seam-tabs > :nth-child(5)) .bravais-seam-home-side { gap: 4px; }
+    /* 中段的上内边距（= 段间距，18px / compact 12px）整段让给页签：这一段是页签与工具格之间的留白，内容本来就竖直
+       居中，压掉它不会挤到任何东西。 */
+    .bravais-seam-home:has(.bravais-seam-tabs > :nth-child(5)) .bravais-seam-home-middle { padding-top: 0; }
+}

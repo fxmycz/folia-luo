@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type CSSProperties, type MouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { collectWallSlots, type WallSlot } from '../../../components/wall/wallSlots';
+import type { WallSlot } from '../../../components/wall/wallSlots';
+import { BRAVAIS_BLOCK_SHAPE, collectShapeSlots } from './bravaisWallShape';
 import { FLIP_MAX_TILES } from '../../../components/wall/flipPlan';
 import { useDevicePixelRatio } from '../../../hooks/useMediaQuery';
 import { useReducedMotionFor } from '../../../hooks/useReducedMotionFor';
 import { useLatticeSettingsStore } from '../../../stores/useLatticeSettingsStore';
 import { useLibraryWallLookStore } from '../../../stores/useLibraryWallLookStore';
-import type { LibrarySuiteStageProps } from '../../core/contracts/suite';
+import type { LibrarySuiteStageProps } from '../../core/suite/suite.contract';
 import { BRAVAIS_METRICS, BRAVAIS_OVERSCAN, BRAVAIS_SEAM_ACRYLIC_BLUR } from './bravaisConstants';
 import { WALL_REFLOW_CONTROLS_REVEAL } from '../../../components/wall/wallReflowMotion';
 import { resolveSlotItem, type BravaisDisplay } from './bravaisDisplay';
@@ -19,6 +20,7 @@ import BravaisWall from './BravaisWall';
 import { useBravaisCamera } from './useBravaisCamera';
 import { useBravaisChromeActions } from './useBravaisChromeActions';
 import { useBravaisDisplay } from './useBravaisDisplay';
+import { useBravaisLocate } from './useBravaisLocate';
 import { useBravaisFocus } from './useBravaisFocus';
 import { useBravaisFrame } from './useBravaisFrame';
 import { bravaisSlotFromKey, useBravaisInteractions, type BravaisStagePlayback } from './useBravaisInteractions';
@@ -27,12 +29,14 @@ import { useBravaisKeyboard } from './useBravaisKeyboard';
 import { useBravaisBlockPlates } from './useBravaisBlockPlates';
 import { useBravaisReflowDriver } from './useBravaisReflowDriver';
 import { useBravaisPlayerSafeArea } from './useBravaisPlayerSafeArea';
+import { useBravaisPosterTilt } from './useBravaisPosterTilt';
+import { albumPaletteVars, posterPaletteVars, resolvePosterPaletteSources, useBravaisPosterPalette } from './bravaisPosterPalette';
 import { useBravaisSeam } from './useBravaisSeam';
 import { useBravaisViewport } from './useBravaisViewport';
 import { closeCommandFilter } from '../../../stores/useAppViewStore';
 import { findDisplayItemSlot } from './bravaisItemSlots';
 import { closeBravaisPanel, openBravaisPanel, syncPanelWithHistory } from './bravaisPanelHistory';
-import { resolveStageSeamTarget, type BravaisSeamTargetInput } from './bravaisSeamTarget';
+import { resolveSeamTarget, type BravaisSeamTargetInput } from './bravaisSeamTarget';
 import { setBravaisFilterEditing, useBravaisUiStore } from './bravaisUiStore';
 import type { BravaisPanelActions } from './BravaisListPanel';
 import { useBravaisWallLook } from './useBravaisWallLook';
@@ -41,7 +45,6 @@ import { libraryWallSeamStyleVars } from '../../../utils/libraryWallSeamStyle';
 import { setBravaisSearchOpen, useBravaisHomeUiStore } from './bravaisHomeUiStore';
 import { useBravaisReducedTransitions } from './bravaisMotion';
 import { useBravaisBeforePush } from './bravaisTransitions';
-import { selectBravaisAccountVariant, useBravaisAccountStore } from './bravaisAccountStore';
 import { useWallHandoffStore } from '../../../stores/useWallHandoffStore';
 import { usePlaybackStore } from '../../../stores/usePlaybackStore';
 import { resolveBravaisBackStep, selectBravaisHasCurrentSong, type BravaisBackStep } from './bravaisBack';
@@ -63,7 +66,7 @@ import './bravaisSeamLooks.css';
 // 局部底板；聚焦卡让位只逐帧重画那一块。
 // B9：首页层的目录树面板与集合层的列表面板同一种开口；首页的全局搜索框开着时窄缝临时展开（search）；管理隐藏视图里
 // 根节点挂 is-managing-hidden（歌单类磁贴的眼睛按钮常驻）。
-// B10：账户的登录态 / 确认态是缝的内容态（bravaisAccountStore → login / confirm 变体），不接 accountLayerRef。
+// B10：登录与切换确认不在缝里（共用的登录窗口与回退到的 grid 确认框）。
 // 实测反馈 1：灯光（is-lights-out）与叠色同 Lattice 一样读 useLatticeSettingsStore（一套墙面外观设置）；左上角隐藏式返回
 // 与右下角工具按钮在 BravaisStageChrome，与 Lattice 共用 components/wall 的同一套控件。左上角返回的去处（bravaisBack）：
 // 不在首页根层时与缝里的 ‹ 同一个返回，首页根层有歌时回到播放页、没有歌时不画。
@@ -84,6 +87,18 @@ const expandBounds = (bounds: { left: number; right: number; top: number; bottom
     bottom: bounds.bottom + by,
 });
 
+/**
+ * 海报的取色来源（bravaisPosterPalette）：歌手页从这位歌手最火的三张专辑封面取；专辑页从这张专辑的封面取（专辑里有
+ * 带自己封面的歌时，再补上它们）。
+ */
+const posterPaletteSourcesFor = (target: BravaisLayer | null): readonly string[] => {
+    if (!target) return NO_SOURCES;
+    const sources = resolvePosterPaletteSources(target.items);
+    const albumCover = target.seam.album?.coverUrl;
+    return albumCover ? [albumCover, ...sources.filter(url => url !== albumCover)].slice(0, 3) : sources;
+};
+const NO_SOURCES: readonly string[] = [];
+
 const BravaisStage: React.FC<LibrarySuiteStageProps> = ({
     isInteractive,
     isDaylight,
@@ -94,7 +109,6 @@ const BravaisStage: React.FC<LibrarySuiteStageProps> = ({
     onTogglePlayback,
     onEnterPlaybackView,
     onOpenLattice,
-    tools,
 }) => {
     const { t } = useTranslation();
     // 交接会话：缝的开口、veil、颗粒与暗角、磁贴藏不藏都按它（纯计算）；排动画的 hook 在下面（要等显示）。
@@ -142,8 +156,6 @@ const BravaisStage: React.FC<LibrarySuiteStageProps> = ({
     const linkedKey = useBravaisUiStore(state => state.linkedKey);
     const isFilterOpen = useBravaisUiStore(state => state.filterEditing);
     const isSearchOpen = useBravaisHomeUiStore(state => state.searchOpen);
-    // B10：账户的登录态 / 确认态（account surface 经 bravaisAccountStore 交来）压过层上的一切开口。
-    const accountVariant = useBravaisAccountStore(selectBravaisAccountVariant);
     const seamInputFor = useCallback((
         target: BravaisLayer,
         live?: { level: BravaisSeamLevel; panelFor: string | null; filterOpen: boolean; searchOpen: boolean },
@@ -162,22 +174,31 @@ const BravaisStage: React.FC<LibrarySuiteStageProps> = ({
             panelOpen: current.panelFor === target.key && Boolean(target.entries?.hasPanel),
             filterOpen: current.filterOpen,
             searchOpen: current.searchOpen,
+            // 海报（歌手页、专辑页）只画在无限拼贴上：过滤生效（有限拼贴）时 rank 围着锚点两边排，海报会挡住一半。
+            poster: (target.surface === 'artist' || Boolean(target.seam.album)) && target.mode !== 'finite',
         };
     }, [frameRef]);
     const resolvedSeamTarget = layer
-        ? resolveStageSeamTarget({
+        ? resolveSeamTarget({
             ...seamInputFor(layer, { level: seamLevel, panelFor, filterOpen: isFilterOpen && owned, searchOpen: isSearchOpen }),
             viewportWidth: view?.width ?? 0,
-        }, accountVariant)
+        })
         : { width: 0, variant: 'none' as const };
     // 交接时缝合上：只把开口目标换成 0，内容不换（缝里画的仍是这一层，开口补间让它随宽度淡出 / 淡入）。
     const seamTarget = handoff.seamClosed ? { width: 0, variant: resolvedSeamTarget.variant } : resolvedSeamTarget;
     const openWidthFor = useCallback((target: BravaisLayer) => (
-        resolveStageSeamTarget(seamInputFor(target), selectBravaisAccountVariant(useBravaisAccountStore.getState())).width
+        resolveSeamTarget(seamInputFor(target)).width
+    ), [seamInputFor]);
+    const posterFor = useCallback((target: BravaisLayer) => (
+        resolveSeamTarget(seamInputFor(target)).variant === 'poster'
     ), [seamInputFor]);
 
     const camera = useBravaisCamera({ frameRef, renderFrame, fieldRef, reducedMotion });
+    // 墙此刻的显示（useBravaisDisplay 提交时就写进它）：形状从它读，换形状的同一次提交里各处就按新形状找 slot。
+    const displayBridgeRef = useRef<BravaisDisplay | null>(null);
+    const getShape = useCallback(() => displayBridgeRef.current?.shape ?? BRAVAIS_BLOCK_SHAPE, []);
     const seam = useBravaisSeam({
+        getShape,
         frameRef,
         renderFrame,
         layer,
@@ -190,6 +211,14 @@ const BravaisStage: React.FC<LibrarySuiteStageProps> = ({
         checkCull: camera.checkCull,
     });
     const { bottomPx, getBottomInset } = useBravaisPlayerSafeArea();
+    // 歌手海报在场时整层（两半墙与缝）一起倾斜，倾斜着照样拖动、滚动（useBravaisPosterTilt）。
+    useBravaisPosterTilt({
+        frameRef,
+        renderFrame,
+        checkCull: camera.checkCull,
+        poster: seamTarget.variant === 'poster' && seamTarget.width > 0,
+        reducedMotion,
+    });
 
     // 量到视口（或尺寸变了）：写进帧状态，相机保持视图中心不动，重新裁剪；跨过窄屏阈值时缝回到新宽度的默认等级。
     useLayoutEffect(() => {
@@ -199,20 +228,16 @@ const BravaisStage: React.FC<LibrarySuiteStageProps> = ({
         camera.moveTo(frameRef.current.center, true);
     }, [camera.moveTo, frameRef, view]);
 
-    const slots = useMemo<readonly WallSlot[]>(() => (
-        camera.bounds ? collectWallSlots(expandBounds(camera.bounds, BRAVAIS_OVERSCAN), BRAVAIS_METRICS, FLIP_MAX_TILES) : []
-    ), [camera.bounds]);
-    const slotsRef = useRef(slots);
-    slotsRef.current = slots;
+    // 此刻渲染着的 slot（按显示的形状裁剪，见下面 useBravaisDisplay 之后）。
+    const slotsRef = useRef<readonly WallSlot[]>([]);
 
     // 键盘焦点换了：把 slot 换成条目 key 交给层描述（集合页据此写回浏览会话）。
-    const displayBridgeRef = useRef<BravaisDisplay | null>(null);
     const onFocusEntry = useCallback((slotKey: string | null) => {
         const current = displayBridgeRef.current;
-        const slot = bravaisSlotFromKey(slotKey);
+        const slot = bravaisSlotFromKey(slotKey, current?.shape);
         current?.layer.onFocusEntry?.(slot ? resolveSlotItem(current, slot)?.key ?? null : null);
     }, []);
-    const focus = useBravaisFocus({ frameRef, tweenTo: camera.tweenTo, getBottomInset, onFocusEntry });
+    const focus = useBravaisFocus({ frameRef, tweenTo: camera.tweenTo, getBottomInset, onFocusEntry, getShape });
 
     const { display, displayRef, isSettling } = useBravaisDisplay(layer, {
         frameRef,
@@ -222,6 +247,7 @@ const BravaisStage: React.FC<LibrarySuiteStageProps> = ({
         navigation,
         reducedTransitions,
         openWidthFor,
+        posterFor,
         setCameraRange: camera.setRange,
         setAnchor: seam.setAnchor,
         planOpening: seam.planOpening,
@@ -230,11 +256,16 @@ const BravaisStage: React.FC<LibrarySuiteStageProps> = ({
         tweenTo: camera.tweenTo,
         collapseFocusCard: focus.collapse,
         getFocusedSlotKey: () => focus.focusedRef.current,
-        restoreFocus: key => focus.focusSlot(bravaisSlotFromKey(key)),
+        restoreFocus: key => focus.focusSlot(bravaisSlotFromKey(key, getShape())),
         // 从 Lattice 翻牌交接回来：磁贴由交接翻进来，不再跑整墙入场。
         suppressEntrance: () => resolveBravaisWallHandoffState(useWallHandoffStore.getState().session).role === 'in',
+        displayRef: displayBridgeRef,
     });
-    displayBridgeRef.current = displayRef.current;
+    const shape = display?.shape ?? BRAVAIS_BLOCK_SHAPE;
+    const slots = useMemo<readonly WallSlot[]>(() => (
+        camera.bounds ? collectShapeSlots(shape, expandBounds(camera.bounds, BRAVAIS_OVERSCAN), FLIP_MAX_TILES) : []
+    ), [camera.bounds, shape]);
+    slotsRef.current = slots;
     // B11 transitions.beforePush：宿主压栈之前，没经过墙上磁贴的打开用键盘焦点所在的 slot 当起点磁贴。
     const getFocusedSlotKey = useCallback(() => focus.focusedRef.current, [focus.focusedRef]);
     useBravaisBeforePush(displayRef, getFocusedSlotKey);
@@ -287,7 +318,7 @@ const BravaisStage: React.FC<LibrarySuiteStageProps> = ({
     // 聚焦卡块内让位：磁贴外框与透光底板的洞同一帧逐帧写（2026-10-09 起，不再是 CSS 过渡）。
     const platesRef = useRef(plates);
     platesRef.current = plates;
-    useBravaisReflowDriver({ reflow: focus.reflow, enabled: !reducedMotion, fieldRef, platesRef });
+    useBravaisReflowDriver({ reflow: focus.reflow, enabled: !reducedMotion, fieldRef, platesRef, getShape });
 
     const active = isInteractive && owned && Boolean(layer?.isInteractive) && handoff.role === null;
     useBravaisKeyboard(active, interactions.handleAction);
@@ -299,20 +330,25 @@ const BravaisStage: React.FC<LibrarySuiteStageProps> = ({
         if (useBravaisSeamStore.getState().level !== 'full') useBravaisSeamStore.getState().setLevel('full');
         openBravaisPanel(current.key);
     }, [displayRef]);
+    // 定位到墙上的一份（列表面板的单击、「定位正在播放」）：键盘焦点落在它上面，相机把它移到屏幕中间（与网格集合页的定位
+    // 一样）；歌曲还展开聚焦卡，居中的是展开后的卡。
+    const showSlot = useCallback((slot: WallSlot) => {
+        const current = displayRef.current;
+        const isTrack = current ? resolveSlotItem(current, slot)?.kind === 'track' : false;
+        focus.focusSlot(slot);
+        if (isTrack) focus.expand(slot, { centered: true });
+        else focus.reveal(focus.drawnRect(slot), { centered: true });
+    }, [displayRef, focus.drawnRect, focus.expand, focus.focusSlot, focus.reveal]);
     const panelActions = useMemo<BravaisPanelActions>(() => ({
         close: closeBravaisPanel,
         fold: () => useBravaisSeamStore.getState().setLevel('hidden'),
         locate: itemKey => {
-            const current = displayRef.current;
             const { anchorX, center } = frameRef.current;
-            const slot = findDisplayItemSlot(current, itemKey, { x: anchorX ?? center.x, y: center.y });
-            if (!current || !slot) return;
-            const item = resolveSlotItem(current, slot);
-            focus.focusSlot(slot, { reveal: item?.kind !== 'track' });
-            if (item?.kind === 'track') focus.expand(slot);
+            const slot = findDisplayItemSlot(displayRef.current, itemKey, { x: anchorX ?? center.x, y: center.y });
+            if (slot) showSlot(slot);
         },
         play: itemKey => displayRef.current?.layer.onPlayItem?.(itemKey),
-    }), [displayRef, focus.expand, focus.focusSlot, frameRef]);
+    }), [displayRef, frameRef, showSlot]);
     // 浏览器后退 / 前进：面板开合跟着 history 记录上的标记走。回到首页（导航栈空了）时面板一定收起。
     useEffect(() => {
         window.addEventListener('popstate', syncPanelWithHistory);
@@ -359,9 +395,19 @@ const BravaisStage: React.FC<LibrarySuiteStageProps> = ({
         frameRef,
         isCollapsed: seam.isCollapsed,
         reopenHere: seam.reopenHere,
-        focusSlot: focus.focusSlot,
+        showSlot,
         openList,
     });
+    // 「定位正在播放」问到这一层时回答（集合层；首页层不被问）。
+    useBravaisLocate({ display, active, isSettling: settling, frameRef, showSlot });
+    // 工具按钮上方的定位按钮：有歌在放时画；首页层（定位器不问它）只在这首在墙上时画。
+    const hasSong = usePlaybackStore(state => state.currentSong !== null);
+    const locatePageKey = layer?.locate?.pageKey ?? null;
+    const isPlayingHere = Boolean(layer?.nowPlayingKey);
+    const locateRun = chromeHandlers['locate-playing'].run;
+    const locatePlaying = useMemo(() => (
+        hasSong && (locatePageKey !== null || isPlayingHere) ? { run: locateRun, isHere: isPlayingHere, pageKey: locatePageKey } : null
+    ), [hasSong, isPlayingHere, locatePageKey, locateRun]);
 
     const setLevel = useCallback((level: BravaisSeamLevel) => useBravaisSeamStore.getState().setLevel(level), []);
     // 边缘标签：折叠时恢复，出屏收起时在这里裂开。键盘激活（Enter / Space，click 的 detail 为 0）时标签随即藏起，
@@ -406,6 +452,28 @@ const BravaisStage: React.FC<LibrarySuiteStageProps> = ({
 
     // 信息条的预设（§5「缝的材质」）：主题纸色以外的预设把材质写成根节点上的自定义属性；透明的缝不写（预设不生效）。
     const seamStyleVars = useMemo(() => (seamLook.seamStyle ? libraryWallSeamStyleVars(seamLook.seamStyle) : null), [seamLook.seamStyle]);
+    // 海报与旁边那面墙共用一套颜色（bravaisPosterPalette）：歌手页从这位歌手最火的三张专辑封面取；专辑页从这张专辑的
+    // 封面取（专辑里有带自己封面的歌时，再补上它们）。
+    const posterActive = seamTarget.variant === 'poster';
+    const albumPoster = posterActive && Boolean(layer?.seam.album);
+    const renderedPosterLayer = seam.rendered.variant === 'poster' ? seam.rendered.layer : null;
+    // 同一层换形态（点过滤、开列表面板、表单）时目标先不是海报了，海报还要转出去半圈：颜色等它换下来再撤，不然转出的
+    // 那一拍回退成默认色（专辑页是藏青色块）。
+    const paletteLayer = posterActive || (renderedPosterLayer && renderedPosterLayer.key === layer?.key) ? layer : null;
+    const posterSources = useMemo(() => posterPaletteSourcesFor(paletteLayer), [paletteLayer]);
+    const posterPalette = useBravaisPosterPalette(posterSources, Boolean(paletteLayer));
+    // 缝里此刻画着的海报可能还是上一层的（换层时缝的内容晚一拍才换，约 0.2s）：它的颜色也留着，不然那一拍里它读不到
+    // 自己的颜色、回退成默认色，看着像闪了一下。歌手与专辑两套变量名不同，可以同时在。
+    const lingeringPoster = renderedPosterLayer && renderedPosterLayer.key !== layer?.key ? renderedPosterLayer : null;
+    const lingeringSources = useMemo(() => posterPaletteSourcesFor(lingeringPoster), [lingeringPoster]);
+    const lingeringPalette = useBravaisPosterPalette(lingeringSources, Boolean(lingeringPoster));
+    const posterVars = useMemo(() => {
+        const varsFor = (target: BravaisLayer | null, palette: typeof posterPalette) => {
+            if (!target) return {};
+            return target.seam.album ? albumPaletteVars(palette?.album ?? null) : posterPaletteVars(palette?.artist ?? null);
+        };
+        return { ...varsFor(lingeringPoster, lingeringPalette), ...varsFor(paletteLayer, posterPalette) };
+    }, [lingeringPalette, lingeringPoster, paletteLayer, posterPalette]);
 
     const rootClassName = [
         'lattice-root',
@@ -424,6 +492,10 @@ const BravaisStage: React.FC<LibrarySuiteStageProps> = ({
         seeThrough && BRAVAIS_SEAM_ACRYLIC_BLUR ? 'has-seam-blur' : '',
         display?.layer.seam.home?.manage ? 'is-managing-hidden' : '',
         display?.layer.home?.batch ? 'is-batch' : '',
+        // 歌手海报在场：墙上的磁贴改成海报的样子（间隔拉开、封面保持正方形，bravaisPoster.css）。
+        posterActive && !albumPoster ? 'has-poster-wall' : '',
+        // 专辑海报在场：墙上的曲目画成这张封面的拼贴或碎片（bravaisAlbumPoster.css）。
+        albumPoster ? 'has-album-wall' : '',
     ].filter(Boolean).join(' ');
 
     return (
@@ -437,6 +509,7 @@ const BravaisStage: React.FC<LibrarySuiteStageProps> = ({
                 '--bravais-focus-reveal-duration': `${WALL_REFLOW_CONTROLS_REVEAL.durationMs}ms`,
                 '--bravais-focus-reveal-rise': `${WALL_REFLOW_CONTROLS_REVEAL.risePx}px`,
                 ...seamStyleVars,
+                ...posterVars,
             } as CSSProperties}
             data-library-stage="bravais"
             data-bravais-layer={display?.layer.key}
@@ -492,7 +565,6 @@ const BravaisStage: React.FC<LibrarySuiteStageProps> = ({
                 contentRef={seamContentRef}
                 tabRef={tabRef}
                 variant={seam.rendered.variant}
-                targetVariant={seamTarget.variant}
                 leaving={seam.leaving}
                 contentWidth={seam.rendered.width}
                 layer={seam.rendered.layer}
@@ -510,9 +582,8 @@ const BravaisStage: React.FC<LibrarySuiteStageProps> = ({
                 isDaylight={isDaylight}
                 toolsClaimed={(isInteractive && owned) || handoff.role === 'out'}
                 back={back}
-                locatePlaying={chromeHandlers['locate-playing']}
+                locatePlaying={locatePlaying}
                 onOpenLattice={onOpenLattice}
-                tools={tools}
             />
         </section>
     );

@@ -162,6 +162,8 @@
     top: 0;
     bottom: 0;
     left: 0;
+    /* 每帧写的 transform 都按屏幕原点算（倾斜时绕海报右缘转，见 bravaisFrame 的 withTilt）。 */
+    transform-origin: 0 0;
     z-index: 5;
     width: 0;
     overflow: hidden;

@@ -2,9 +2,11 @@ import { expect, test, type Page } from '@playwright/test';
 import { installBaseState, mockNeteaseApi, openApp, svgDataUrl } from './helpers/appFixtures';
 
 // test/ui/bravaisToolsPanel.spec.ts
-// bravais 右下角工具面板在真实应用里的接线（设计稿 §7.5「浮层控件」）：快捷动作经 stage 契约的 tools 端口落到命令面板的
+// bravais 右下角工具面板在真实应用里的接线（设计稿 §7.5「浮层控件」）：快捷动作经墙面工具宿主（App 的 useAppWallToolsHost）落到命令面板的
 // 同一条命令（队列洗牌 playback-shuffle、生成主题 theme-generate-current，可用性也是命令面板那一份），音量滑条读写
 // 应用的音量 store（与播放条、播放页面板同一份）。前往 Lattice 的翻牌交接在 wallHandoff.spec。
+// 队列浮岛（components/wall/WallToolsQueueIsland）：手柄拖拽经宿主的 moveQueueSong 改的是应用的播放队列；点歌播放不跳页
+// （视图仍是 home，hash 不变——首页启动时 hash 为空）。
 
 test.use({ screenshot: 'only-on-failure' });
 
@@ -83,4 +85,50 @@ test('[bravais] the tools panel shuffles the real queue once, gates the theme on
     await expect.poll(() => volumeState(page)).toEqual({ volume: 0.55, isMuted: true });
     await panel(page).getByRole('button', { name: 'Unmute', exact: true }).click();
     await expect.poll(() => volumeState(page)).toEqual({ volume: 0.55, isMuted: false });
+});
+
+test('[bravais] the queue island reorders the real queue by drag and plays a song without leaving home', async ({ page }) => {
+    await boot(page);
+    await seedQueue(page);
+    await page.getByRole('button', { name: 'Wall tools', exact: true }).click();
+    await quick(page, 'queue').click();
+    const island = page.getByRole('region', { name: 'Play queue', exact: true });
+    await expect(island).toBeVisible();
+    await expect(island.locator('.lattice-tools-island-heading')).toHaveText('Play queue · 12 songs');
+    expect(await page.evaluate(() => localStorage.getItem('wall_tools_queue_island_open'))).toBe('true');
+
+    // 第 2 首（下标 1）拖到第 5 首的位置。
+    const handle = island.locator('[data-queue-index="1"] .lattice-tools-island-handle');
+    const box = (await handle.boundingBox())!;
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    for (let step = 1; step <= 6; step += 1) {
+        await page.mouse.move(x, y + step * 20);
+        await page.waitForTimeout(20);
+    }
+    await page.mouse.up();
+    await expect.poll(async () => (await queueIds(page)).slice(0, 6)).toEqual([7000, 7002, 7003, 7004, 7001, 7005]);
+    await expect(panel(page)).toBeVisible();
+
+    // 点一首：经应用的 playSong 换歌（mock 的访客网易云解析不出地址，currentSong 不一定换得过去，所以认 playSong 的日志），
+    // 但留在首页（不跳播放页），面板与浮岛都还开着。
+    const played: string[] = [];
+    page.on('console', message => {
+        if (message.text().includes('playSong initiated')) played.push(message.text());
+    });
+    const hashBefore = await page.evaluate(() => window.location.hash);
+    expect(['', '#home']).toContain(hashBefore);
+    await island.locator('[data-queue-index="6"] .lattice-tools-island-song').click();
+    await expect.poll(() => played.some(text => text.includes('Tools Track 7'))).toBe(true);
+    await page.waitForTimeout(800);
+    expect(await page.evaluate(() => window.location.hash)).toBe(hashBefore);
+    expect(await page.evaluate(async () => {
+        const path = '/src/stores/useAppViewStore.ts';
+        const { useAppViewStore } = await import(/* @vite-ignore */ path);
+        return useAppViewStore.getState().view as string;
+    })).toBe('home');
+    await expect(island).toBeVisible();
+    await expect(panel(page)).toBeVisible();
 });

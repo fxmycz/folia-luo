@@ -1,10 +1,11 @@
+import type { LoginDiagnosticLine } from '@/types/onlineMusic';
 import { describe, expect, it, vi } from 'vitest';
 import { loadPrompts } from '../../../.github/scripts/triage/io/context.mjs';
 import { runIssueTriage } from '../../../.github/scripts/triage/io/run-issue.mjs';
 import { renderMarker } from '../../../.github/scripts/triage/lib/comments.mjs';
 import { extractQrReport, matchPlaybook, mergeDiagnosis, reportForLlm } from '../../../.github/scripts/triage/lib/login-diagnosis.mjs';
 import { validateDiagnosis } from '../../../.github/scripts/triage/lib/schema.mjs';
-import { formatQrLoginDiagnosticReport } from '@/utils/qrLoginDiagnosticReport';
+import { formatLoginDiagnosticReport as formatQrLoginDiagnosticReport } from '@/services/onlineMusic/login/loginDiagnosticReport';
 import { config, makeIssue, NOW, templateLines } from './helpers';
 
 // test/unit/triage/login-diagnosis.test.ts
@@ -14,7 +15,7 @@ const playbook = config.loginPlaybook;
 
 // 用应用里真实的格式化函数拼一份报告；providerLines 模拟主进程排好的 details 行。
 const report = (providerId: 'qq' | 'netease' | 'kugou', { appVersion = '0.7.17', userAgent = 'Mozilla/5.0 Folia/0.7.17 Electron/43.7.5', timeline = [] as { at: number; event: string; detail: Record<string, unknown> }[], providerLines = [] as string[] } = {}) => formatQrLoginDiagnosticReport({
-    generatedAt: NOW, appVersion, userAgent, providerId, methodId: providerId, failure: 'check-error', timeline, providerLines,
+    generatedAt: NOW, appVersion, userAgent, providerId, methodId: providerId, failure: 'check-error', timeline, providerLines: providerLines as unknown as LoginDiagnosticLine[],
 });
 
 const deviceLimitReport = report('qq', {
@@ -38,6 +39,13 @@ const webFetchFailedReport = (userAgent: string) => report('kugou', {
     timeline: [{ at: NOW, event: 'start:error', detail: { name: 'TypeError', message: 'Failed to fetch' } }],
 });
 
+// #573 的原始报告：照抄 .env.example 的 localhost:3000 打包进安卓 App，自检的 no-cors 探测还被当成了可达。
+const loopbackWebViewReport = report('netease', {
+    userAgent: 'Mozilla/5.0 (Linux; Android 16; 24117RK2CC Build/BP2A.250605.031.A3; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/153.0.8010.39 Mobile Safari/537.36',
+    timeline: [{ at: NOW, event: 'state', detail: { state: 'error', message: 'code 404: Not Found' } }],
+    providerLines: ['runtime: web (remote API http local)', 'session: login cookie=no, anonymous cookie=no'],
+});
+
 const networkResetReport = report('netease', {
     providerLines: ['login requests (1, oldest first, UTC):', '  20:07:34.253 /api/login/qrcode/client/login rejected status=502 code=502 msg="read ECONNRESET" 114ms'],
 });
@@ -55,6 +63,7 @@ describe('login playbook rules', () => {
         expect(matchPlaybook(webMissingApiReport, 'netease', playbook)).toEqual(['web-api-not-configured']);
         expect(matchPlaybook(webFetchFailedReport('Mozilla/5.0 (Linux; Android 16) Chrome/148 Mobile Safari/537.36'), 'kugou', playbook)).toEqual(['web-api-unreachable']);
         expect(matchPlaybook(networkResetReport, 'netease', playbook)).toEqual(['network-reset']);
+        expect(matchPlaybook(loopbackWebViewReport, 'netease', playbook)).toEqual(['web-api-loopback']);
     });
 
     it('does not apply provider-specific or web-only causes elsewhere', () => {
@@ -150,13 +159,73 @@ describe('login diagnosis in issue triage', () => {
     });
 
     it('falls back to the rules when the LLM is unavailable or returns garbage', async () => {
-        const offline = await run({ title: '[QR login] netease login failed', body: webMissingApiReport }).result;
+        const offline = await run({ title: '[QR login] netease login failed', body: networkResetReport }).result;
         expect(offline.plan.upsert?.body).toContain('根据诊断报告自动匹配到以下已知问题');
-        expect(offline.plan.upsert?.body).toContain('VITE_NETEASE_API_BASE');
+        expect(offline.plan.upsert?.body).toContain('换一个网络');
 
-        const garbage = await run({ title: '[QR login] netease login failed', body: webMissingApiReport }, { llmReply: { causes: 'x' } }).result;
-        expect(garbage.plan.upsert?.body).toContain('网页版部署没有配置音源 API 地址');
+        const garbage = await run({ title: '[QR login] netease login failed', body: networkResetReport }, { llmReply: { causes: 'x' } }).result;
+        expect(garbage.plan.upsert?.body).toContain('到平台服务器的连接被网络环境中断');
         expect(garbage.plan.notes.join()).toContain('登录诊断输出未通过校验');
+    });
+
+    it('closes web deployments without a backend as a deployment problem, with the fix steps', async () => {
+        const { plan } = await run({ title: '[QR login] netease login failed', body: webMissingApiReport }).result;
+        expect(plan.close).toEqual({ reason: 'web-deployment', stateReason: 'not_planned' });
+        expect(plan.labelsAdd).toEqual(expect.arrayContaining(['deployment config', 'bot: auto-closed']));
+        expect(plan.comments[0]).toContain('部署配置问题');
+        expect(plan.comments[0]).toContain('VITE_NETEASE_API_BASE');
+
+        const unreachable = await run({ title: '[QR login] kugou login failed', body: webFetchFailedReport('Mozilla/5.0 (Linux; Android 16; wv) Chrome/148 Mobile Safari/537.36') }).result;
+        expect(unreachable.plan.close?.reason).toBe('web-deployment');
+        expect(unreachable.plan.comments[0]).toContain('网页版连不上部署的 API 服务');
+    });
+
+    it('closes web builds whose API address points at the device itself', async () => {
+        const { plan } = await run({ title: '[QR login] netease login failed', body: loopbackWebViewReport }).result;
+        expect(plan.close).toEqual({ reason: 'web-deployment', stateReason: 'not_planned' });
+        expect(plan.comments[0]).toContain('网页版的 API 地址指向本机');
+
+        // 本机开发（页面和 API 都在本机、桌面浏览器）不算。
+        const localDev = formatQrLoginDiagnosticReport({
+            generatedAt: NOW, appVersion: '0.7.18', userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/150 Safari/537.36',
+            origin: 'http://localhost:5173', providerId: 'netease', methodId: null, failure: 'check-error', timeline: [],
+            providerLines: ['runtime: web (remote API http local)'] as unknown as LoginDiagnosticLine[],
+        });
+        expect(matchPlaybook(localDev, 'netease', playbook)).not.toContain('web-api-loopback');
+        // 桌面版内置后端也在 127.0.0.1，不能误伤。
+        const desktop = report('netease', { providerLines: ['runtime: electron (local API)', 'local api: running 127.0.0.1:62598'] });
+        expect(matchPlaybook(desktop, 'netease', playbook)).not.toContain('web-api-loopback');
+    });
+
+    it('closes reports from unofficial builds and labels them', async () => {
+        const unofficial = formatQrLoginDiagnosticReport({
+            generatedAt: NOW, appVersion: '0.7.18', userAgent: 'Mozilla/5.0 Folia/0.7.18 Electron/43.7.5', build: 'unofficial (someone/folia-fork@abc1234)',
+            providerId: 'qq', methodId: 'qq', failure: 'check-error', timeline: [], providerLines: [],
+        });
+        const { plan } = await run({ title: '[QR login] qq login failed', body: unofficial }).result;
+        expect(plan.close).toEqual({ reason: 'unofficial-build', stateReason: 'not_planned' });
+        expect(plan.labelsAdd).toEqual(expect.arrayContaining(['unofficial build', 'bot: auto-closed']));
+        expect(plan.comments[0]).toContain('不是 Folia 仓库 CI 构建的官方版本');
+    });
+
+    it('keeps self-hosted reports open unless the deployment itself is broken', async () => {
+        const selfHosted = formatQrLoginDiagnosticReport({
+            generatedAt: NOW, appVersion: '0.7.18', userAgent: 'Mozilla/5.0 Chrome/150 Safari/537.36', build: 'self-hosted vercel (someone/folia-major@abc1234)',
+            origin: 'https://folia.example.com', providerId: 'qq', methodId: 'qq', failure: 'check-error', timeline: [], providerLines: [],
+        });
+        const { plan } = await run({ title: '[QR login] qq login failed', body: selfHosted }).result;
+        expect(plan.close).toBeNull();
+        expect(plan.labelsAdd).toContain('self-hosted');
+    });
+
+    it('keeps reports from official builds open', async () => {
+        const official = formatQrLoginDiagnosticReport({
+            generatedAt: NOW, appVersion: '0.7.18', userAgent: 'Mozilla/5.0 Folia/0.7.18 Electron/43.7.5', build: 'official (chthollyphile/folia-major@abc1234)',
+            providerId: 'qq', methodId: 'qq', failure: 'check-error', timeline: [], providerLines: [],
+        });
+        const { plan } = await run({ title: '[QR login] qq login failed', body: official }).result;
+        expect(plan.close).toBeNull();
+        expect(plan.labelsAdd).not.toContain('unofficial build');
     });
 
     it('posts AI suggestions when no known cause matches', async () => {

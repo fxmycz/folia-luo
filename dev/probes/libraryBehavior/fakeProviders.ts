@@ -7,6 +7,7 @@ import {
     type ProviderPage,
 } from '../../../src/types/onlineMusic';
 import { registerOnlineMusicProvider } from '../../../src/services/onlineMusic/providerRegistry';
+import { useOnlineProviderAccountStore } from '../../../src/stores/useOnlineProviderAccountStore';
 import {
     HOME_CLOUD,
     HOME_FAVORITE_ALBUM_COUNTS,
@@ -64,6 +65,8 @@ type CollectionData = {
     error?: 'not-public';
     isOwned?: boolean;
     description?: string;
+    /** 详情里额外的字段（?covers=1 时歌手专辑的封面、年份、流派、时长）。 */
+    detail?: Partial<ProviderCollection> & { albumYear?: number; albumGenre?: string; albumDuration?: number };
 };
 
 const collections = new Map<string, CollectionData>();
@@ -140,10 +143,93 @@ export const makeOnlineSong = (
             id: resolvedAlbum.id,
             name: resolvedAlbum.name,
             catalogRef: { providerId, kind: 'album', id: resolvedAlbum.id },
+            ...(PROBE_COVERS ? { coverUrl: probePosterCover(`${prefix}-${index}`) } : {}),
         },
         durationMs: 180000 + index * 1000,
+        ...(PROBE_COVERS ? { coverUrl: probePosterCover(`${prefix}-${index}`) } : {}),
         sourceRef: { kind: 'online', providerId, mediaId: id },
     };
+};
+
+/**
+ * 手动点检用的封面（?covers=1 时才有）：按 id 生成一张方形的几何海报 SVG（data URI，不发请求）。用例不带这个参数，
+ * 请求账与画面断言都不受影响。
+ */
+const PROBE_COVERS = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('covers');
+const PROBE_COVER_PALETTES = [
+    ['#22305f', '#e4462b', '#efe9dc'], ['#2f5d50', '#efe9dc', '#141210'], ['#5a1e3c', '#f2b632', '#efe9dc'],
+    ['#efe9dc', '#141210', '#e4462b'], ['#f2b632', '#141210', '#22305f'], ['#3b3530', '#7fd1ae', '#efe9dc'],
+    ['#7fd1ae', '#141210', '#efe9dc'], ['#e4462b', '#141210', '#efe9dc'],
+];
+/**
+ * 拿真图点检（?realCovers=<目录地址>&realCoverCount=N）：封面换成那个目录里的 a01.jpg … aNN.jpg（按 id 挑一张）。
+ * 图放在本机、自己起一个带 CORS 头的静态服务（专辑墙读封面像素要 CORS），不进仓库。
+ */
+const PROBE_REAL_COVERS = (() => {
+    if (typeof window === 'undefined') return null;
+    const params = new URLSearchParams(window.location.search);
+    const base = params.get('realCovers');
+    const count = Number(params.get('realCoverCount'));
+    return base && count > 0 ? { base: base.endsWith('/') ? base : `${base}/`, count } : null;
+})();
+
+const probePosterCover = (seed: string): string => {
+    let hash = 2166136261;
+    for (let index = 0; index < seed.length; index += 1) hash = Math.imul(hash ^ seed.charCodeAt(index), 16777619) >>> 0;
+    if (PROBE_REAL_COVERS) return `${PROBE_REAL_COVERS.base}a${String((hash % PROBE_REAL_COVERS.count) + 1).padStart(2, '0')}.jpg`;
+    const [ground, figure, accent] = PROBE_COVER_PALETTES[hash % PROBE_COVER_PALETTES.length];
+    const shape = (hash >>> 4) % 4;
+    const art = [
+        `<circle cx="300" cy="210" r="130" fill="${figure}"/><path d="M0 400 L150 300 L280 380 L400 280 L512 360 V512 H0Z" fill="${accent}"/>`,
+        `<rect x="96" y="96" width="320" height="320" fill="none" stroke="${figure}" stroke-width="40"/><rect x="200" y="200" width="112" height="112" fill="${accent}"/>`,
+        `<path d="M0 512 L256 120 L512 512Z" fill="${figure}"/><circle cx="380" cy="130" r="54" fill="${accent}"/>`,
+        `${Array.from({ length: 8 }, (_, row) => `<rect x="0" y="${row * 64}" width="512" height="28" fill="${row % 2 ? figure : accent}"/>`).join('')}`,
+    ][shape];
+    return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><rect width="512" height="512" fill="${ground}"/>${art}</svg>`)}`;
+};
+
+/**
+ * ?covers=1 时歌手专辑也有曲目与详情（手动点检从歌手页点进专辑看海报）：每三张里有一张是中文名，详情带封面、年份、
+ * 流派、总时长与一句简介，十首歌都用专辑封面。用例不带这个参数，歌手专辑仍然是空的。
+ */
+const PROBE_CJK_ALBUM_NAMES = ['晚风信', '把今天折进口袋', '海边的第七个夏天', '无人知晓的城市'];
+const PROBE_GENRES = ['独立民谣', 'Dream Pop', '电子', 'Post-Rock'];
+const probeArtistAlbumName = (index: number): string => (
+    PROBE_COVERS && index % 3 === 0 ? PROBE_CJK_ALBUM_NAMES[(index / 3) % PROBE_CJK_ALBUM_NAMES.length] : artistAlbumName(index)
+);
+
+const ensureProbeArtistAlbum = (providerId: string, id: string) => {
+    const target = targetKey(providerId, 'album', id);
+    if (!PROBE_COVERS || collections.has(target)) return;
+    const rule = Object.values(ONLINE_ARTISTS).find(candidate => candidate.providerId === providerId && id.startsWith(`${candidate.albumPrefix}-`));
+    const index = Number(id.slice((rule?.albumPrefix.length ?? 0) + 1));
+    if (!rule || !Number.isInteger(index)) return;
+    const album = { id, name: probeArtistAlbumName(index) };
+    const coverUrl = probePosterCover(id);
+    // 单数号的专辑像「收了几首单曲」：下标 1、4、7 的带自己的封面，下标 5、9 的没有封面（专辑墙切成碎片）；双数号的
+    // 专辑全是同一张封面（专辑墙拼成整张封面）。
+    const mixed = index % 2 === 1;
+    const songs = range(10).map(track => {
+        const song = makeOnlineSong(providerId, `${id}-t`, track, album);
+        const own = mixed && track % 3 === 1 ? probePosterCover(`${id}-single-${track}`) : mixed && track % 4 === 1 ? undefined : coverUrl;
+        return { ...song, coverUrl: own, album: { ...song.album!, coverUrl: own } };
+    });
+    collections.set(target, {
+        providerId,
+        type: 'album',
+        id,
+        name: album.name,
+        songs,
+        description: index % 2 === 0 ? '我把今天的心事折进口袋，留给晚风。' : undefined,
+        detail: {
+            coverUrl,
+            artists: [{ id: rule.artistId, name: rule.name }],
+            albumYear: 2014 + (index % 11),
+            albumGenre: PROBE_GENRES[index % PROBE_GENRES.length],
+            albumDuration: songs.reduce((total, song) => total + (song.durationMs ?? 0), 0),
+            publishedAt: Date.UTC(2014 + (index % 11), index % 12, 1),
+        },
+    });
 };
 
 /** 恢复全部在线 fixture、订阅状态与故障注入的初始值。 */
@@ -273,6 +359,7 @@ const describe = (data: CollectionData | undefined, fallback?: ProviderCollectio
         updatedAt: PROBE_TRACKS_UPDATED_AT,
         ...(data.isOwned ? { isOwned: true } : {}),
         ...(data.description ? { description: data.description } : {}),
+        ...(data.detail ?? {}),
     };
 };
 
@@ -350,6 +437,12 @@ const createFakeProvider = (providerId: string, profile: FakeProviderProfile = '
     return {
         ...base,
         capabilities: { ...base.capabilities, auth: true, userLibrary: true, userAlbums: true },
+        // 应用读账户时先问平台谁登录着（account/accountRead.ts 的 askWho），没有 auth 就当没人登录、不读歌单。
+        // 假平台认探针放进账户 store 的那个用户：探针登出（clearAccount）之后它也说没人。
+        auth: {
+            getLoginStatus: async () => useOnlineProviderAccountStore.getState().accounts[providerId]?.user ?? null,
+            logout: async () => undefined,
+        },
         library: home.library,
         catalog: { ...base.catalog, getCloudTracks: home.getCloudTracks },
         recommendations: {
@@ -397,10 +490,11 @@ const createArtistCatalog = (providerId: string) => ({
                 ? range(rule.albumCount).map(index => ({
                     providerId,
                     id: artistAlbumId(rule.albumPrefix, index),
-                    name: artistAlbumName(index),
+                    name: probeArtistAlbumName(index),
                     type: 'album',
                     trackCount: 10,
                     artists: [{ id: rule.artistId, name: rule.name }],
+                    ...(PROBE_COVERS ? { coverUrl: probePosterCover(artistAlbumId(rule.albumPrefix, index)) } : {}),
                 }))
                 : [];
             return pageOf(albums, limit, offset);
@@ -457,12 +551,14 @@ const createCollectionProvider = (providerId: string): OnlineMusicProvider => ({
         },
         getAlbumTracks: (id, limit = 1000, offset = 0) => {
             const target = targetKey(providerId, 'album', id);
+            ensureProbeArtistAlbum(providerId, String(id));
             return run(providerId, 'albumTracks', target, { offset, limit }, () => (
                 pageOf(collections.get(target)?.songs ?? [], limit, offset)
             ));
         },
         getAlbumDetail: (id, collection) => {
             const target = targetKey(providerId, 'album', id);
+            ensureProbeArtistAlbum(providerId, String(id));
             return run(providerId, 'albumDetail', target, {}, () => describe(collections.get(target), collection));
         },
         getSubscriptionStatus: (type, id) => {

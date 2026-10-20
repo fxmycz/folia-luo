@@ -8,8 +8,8 @@ import '../../dev/probes/homeBehavior/probeApi';
 // 实测反馈 1 的组件用例（homeBehavior 探针 + setSuite('bravais')）：
 // - Lattice 的墙面外观设置（灯光、叠色）作用到 bravais 根节点，三档透光下熄灯不涂黑窗；
 // - 右下角共享工具按钮（components/wall/WallToolsButton）：点按打开面板、滑动打开命令面板、Esc 只收面板；面板分三组——
-//   顶部快捷动作（定位、队列洗牌、生成主题、前往 Lattice：宿主的 stage 工具端口与 onOpenLattice）、音量滑条（应用的音量 store）、
-//   墙面外观（透光、叠色、灯）；
+//   顶部一排纯图标快捷格（定位、队列洗牌、生成主题、队列、前往 Lattice、前往播放页：墙面工具宿主 wallToolsHost——探针里是
+//   只记账的 probeWallToolsHost——与 onOpenLattice）、音量滑条（应用的音量 store）、墙面外观（透光、叠色、灯）；
 // - 左上角隐藏式返回（WallBackButton concealed）：热区 / 键盘聚焦出现；首页根层有歌时回到播放页、没有歌时不画，
 //   集合层上与缝里的 ‹ 同一个返回（先关面板再退层）；
 // - 聚焦卡：立即播放是纯图标按钮，「已在队列」悬停 / 聚焦时显示「插入队列」。
@@ -208,7 +208,7 @@ test.describe('[bravais-only] wall chrome and shared appearance settings', () =>
         const menu = panel(page);
         await expect(menu).toBeVisible();
 
-        // 顺序：快捷动作一排（四格）→ 音量 → 「墙面外观」小标题 → 透光 → 叠色 → 灯与帮助。
+        // 顺序：快捷格一排（六格）→ 音量 → 「墙面外观」小标题 → 透光 → 叠色 → 灯与帮助。
         const order = await menu.evaluate(node => [...node.children].map(child => {
             if (child.classList.contains('lattice-tools-quick')) {
                 return `quick:${[...child.querySelectorAll<HTMLElement>('[data-wall-tools-quick]')].map(button => button.dataset.wallToolsQuick).join(',')}`;
@@ -219,7 +219,7 @@ test.describe('[bravais-only] wall chrome and shared appearance settings', () =>
             return child.textContent?.trim().split(/\s/)[0] ?? '';
         }));
         expect(order).toEqual([
-            'quick:locate-playing,shuffle-queue,generate-theme,open-lattice',
+            'quick:locate-playing,shuffle-queue,generate-theme,queue,open-lattice,open-player',
             'slider',
             'heading',
             'Wall',
@@ -227,15 +227,17 @@ test.describe('[bravais-only] wall chrome and shared appearance settings', () =>
             'lights+help',
         ]);
         await expect(menu.getByRole('separator', { name: 'Wall appearance', exact: true })).toBeAttached();
-        // 快捷动作的可访问名是全名，图标下是短字，tooltip 带按键提示。
+        // 快捷格是纯图标：可访问名是全名，格子里没有字，tooltip 带按键提示。
         await expect(quick(page, 'locate-playing')).toHaveAccessibleName('Locate the playing song');
+        await expect(quick(page, 'locate-playing')).toHaveText('');
         await expect(quick(page, 'locate-playing')).toHaveAttribute('title', /: \+ C/);
         await expect(quick(page, 'shuffle-queue')).toHaveAccessibleName('Shuffle the queue');
         await expect(quick(page, 'shuffle-queue')).toHaveAttribute('title', /: \+ R/);
         await expect(quick(page, 'generate-theme')).toHaveAccessibleName('Generate a theme for this song');
         await expect(quick(page, 'open-lattice')).toHaveAccessibleName('Go to Lattice');
         await expect(quick(page, 'open-lattice')).toHaveAttribute('title', /Ctrl \+ B/);
-        await expect(quick(page, 'open-lattice')).toContainText('Lattice');
+        await expect(quick(page, 'queue')).toHaveAccessibleName('Play queue');
+        await expect(quick(page, 'open-player')).toHaveAccessibleName('Open the player');
 
         // 面板整个在屏内（不顶出顶部、不出右边）；窄屏同样放得下。
         const inside = async () => {
@@ -258,15 +260,18 @@ test.describe('[bravais-only] wall chrome and shared appearance settings', () =>
         // 探针的宿主缺省没给 onOpenLattice：没有那一格。
         await expect(quick(page, 'open-lattice')).toHaveCount(0);
 
-        // 缺省（没有歌）：主题与洗牌都不可用，tooltip / aria-description 写原因。
+        // 缺省（没有歌）：主题、洗牌与前往播放页都不可用，tooltip / aria-description 写原因；队列格在（开合队列浮岛，浮岛本身见 wallToolsIsland.spec）。
         await expect(quick(page, 'generate-theme')).toBeDisabled();
         await expect(quick(page, 'generate-theme')).toHaveAttribute('aria-description', 'Needs a playing song with lyrics (or pure music)');
         await expect(quick(page, 'generate-theme')).toHaveAttribute('title', /Needs a playing song/);
         await expect(quick(page, 'shuffle-queue')).toBeDisabled();
         await expect(quick(page, 'shuffle-queue')).toHaveAttribute('aria-description', /two or more songs/);
+        await expect(quick(page, 'open-player')).toBeDisabled();
+        await expect(quick(page, 'open-player')).toHaveAttribute('aria-description', 'Nothing is playing yet');
+        await expect(quick(page, 'queue')).toBeEnabled();
 
         // 宿主说可以了：两格可用，点了交给宿主（命令面板的同一条命令），面板不收起。
-        await page.evaluate(() => window.__homeProbe!.setStageTools({ themeGeneration: 'ready', canShuffleQueue: true }));
+        await page.evaluate(() => window.__homeProbe!.setWallToolsHost({ themeGeneration: 'ready', canShuffleQueue: true }));
         await expect(quick(page, 'generate-theme')).toBeEnabled();
         await expect(quick(page, 'generate-theme')).not.toHaveAttribute('aria-description', /.+/);
         await quick(page, 'shuffle-queue').click();
@@ -276,17 +281,18 @@ test.describe('[bravais-only] wall chrome and shared appearance settings', () =>
         await expect.poll(async () => (await calls(page, 'generateTheme')).length).toBe(1);
         await expect(menu).toBeVisible();
 
-        // 生成中：禁用、aria-busy，短字换成「Working…」，状态进 tooltip；生成完恢复。
-        await page.evaluate(() => window.__homeProbe!.setStageTools({ themeGeneration: 'busy' }));
+        // 生成中：禁用、aria-busy，状态进 tooltip 与 aria-description；生成完恢复。
+        await page.evaluate(() => window.__homeProbe!.setWallToolsHost({ themeGeneration: 'busy' }));
         const theme = quick(page, 'generate-theme');
         await expect(theme).toBeDisabled();
         await expect(theme).toHaveAttribute('aria-busy', 'true');
         await expect(theme).toHaveClass(/\bis-busy\b/);
-        await expect(theme).toContainText('Working…');
+        await expect(theme).toHaveAttribute('title', /Generating a theme…/);
         await expect(theme).toHaveAttribute('aria-description', 'Generating a theme…');
-        await page.evaluate(() => window.__homeProbe!.setStageTools({ themeGeneration: 'ready' }));
+        await page.evaluate(() => window.__homeProbe!.setWallToolsHost({ themeGeneration: 'ready' }));
         await expect(theme).toBeEnabled();
-        await expect(theme).toContainText('Theme');
+        await expect(theme).not.toHaveAttribute('aria-busy', /.*/);
+        await expect(theme).toHaveAttribute('title', 'Generate a theme for this song');
         expect(await calls(page, 'generateTheme')).toHaveLength(1);
     });
 
@@ -296,6 +302,30 @@ test.describe('[bravais-only] wall chrome and shared appearance settings', () =>
         await tools(page).click();
         await quick(page, 'open-lattice').click();
         await expect.poll(async () => (await calls(page, 'openLattice')).length).toBe(1);
+        await expect(panel(page)).toHaveCount(0);
+    });
+
+    test('in Personal FM, Lattice and the queue cell are disabled with a reason', async ({ mount, page }) => {
+        await mountBravais(mount, page);
+        await page.evaluate(() => window.__homeProbe!.setLattice(true));
+        await page.evaluate(async () => {
+            const path = '/src/stores/usePlaybackStore.ts';
+            const { usePlaybackStore } = await import(/* @vite-ignore */ path);
+            usePlaybackStore.setState({ isFmMode: true });
+        });
+        await tools(page).click();
+        await expect(quick(page, 'open-lattice')).toBeDisabled();
+        await expect(quick(page, 'open-lattice')).toHaveAttribute('aria-description', 'Lattice does not support Personal FM mode');
+        await expect(quick(page, 'queue')).toBeDisabled();
+        await expect(quick(page, 'queue')).toHaveAttribute('aria-description', 'Personal FM has no queue to edit');
+    });
+
+    test('open the player goes through the host and closes the panel', async ({ mount, page }) => {
+        await mountBravais(mount, page);
+        await page.evaluate(() => window.__homeProbe!.setNowPlaying('online:probe:loaded'));
+        await tools(page).click();
+        await quick(page, 'open-player').click();
+        await expect.poll(async () => (await calls(page, 'openPlayer')).length).toBe(1);
         await expect(panel(page)).toHaveCount(0);
     });
 

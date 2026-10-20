@@ -33,6 +33,7 @@ const VECTOR_SIGNATURE = 'PoZgJ8TJCS17TyAV2UizP6m7JZSt8KeCzB9TPXgYwffq3w9kT5PvJP
 const TEST_KEYS = [{ keyId: TEST_KEY.keyId, label: 'Test', publicKey: TEST_KEY.publicKey, revoked: false }];
 const VECTOR_MANIFEST = { id: 'vector', version: '1.0.0' };
 const OFFICIAL_FIXTURE = path.resolve(__dirname, '../../fixtures/folium-signature/official-fixture');
+const BETA_FIXTURE = path.resolve(__dirname, '../../fixtures/folium-signature/beta-fixture');
 
 // Electron is replaced before the loader is required (see modSystemFileGrants.test.ts).
 let dialogDetails: string[] = [];
@@ -60,6 +61,7 @@ stubModule('electron', {
 stubModule('electron-store', FakeStore);
 
 const {
+    CHANNEL_STATUS,
     SIGNATURE_FILE,
     buildSignedMessage,
     computeSignedDigest,
@@ -195,6 +197,36 @@ describe('verifyModSignature', () => {
             keyId: 'folium-2026-1',
         });
     });
+
+    it('reports a mod signed with a beta-channel key as beta, never as verified', () => {
+        const betaKeys = [{ ...TEST_KEYS[0], channel: 'beta' }];
+        const dir = signedVectorTree();
+        expect(verifyModSignature(dir, VECTOR_MANIFEST, { keys: betaKeys })).toEqual({
+            status: 'beta', keyId: TEST_KEY.keyId, keyLabel: 'Test', signedAt: VECTOR_FIELDS.signedAt,
+        });
+        // A beta signature fails the same checks a release signature does.
+        fs.appendFileSync(path.join(dir, 'client.mjs'), '// changed\n');
+        expect(verifyModSignature(dir, VECTOR_MANIFEST, { keys: betaKeys })).toMatchObject({ status: 'invalid', reason: 'digest-mismatch' });
+        expect(verifyModSignature(signedVectorTree(), VECTOR_MANIFEST, { keys: betaKeys, revokedDigests: [VECTOR_DIGEST] }).reason).toBe('revoked-mod');
+
+        expect(verifyModSignature(BETA_FIXTURE, { id: 'beta-signature-fixture', version: '1.0.0' })).toMatchObject({
+            status: 'beta',
+            keyId: 'folium-beta-2026-1',
+            keyLabel: 'Folium beta',
+        });
+    });
+
+    it('treats a key with a channel the host does not know as untrusted, never as verified', () => {
+        for (const channel of ['Beta', 'preview', 'constructor', '__proto__', 'toString', '', null]) {
+            const keys = [{ ...TEST_KEYS[0], channel }];
+            expect(verifyModSignature(signedVectorTree(), VECTOR_MANIFEST, { keys })).toMatchObject({
+                status: 'invalid', reason: 'unknown-key',
+            });
+        }
+        TRUSTED_SIGNING_KEYS.forEach((key: { channel?: string }) => {
+            expect(Object.hasOwn(CHANNEL_STATUS, key.channel ?? 'release')).toBe(true);
+        });
+    });
 });
 
 describe('loader integration', () => {
@@ -231,6 +263,7 @@ describe('loader integration', () => {
 
     it('lists the signature state and shows it in the enable confirmation', async () => {
         writeMod(OFFICIAL_FIXTURE);
+        writeMod(BETA_FIXTURE);
         const tampered = writeMod(signedVectorTree());
         fs.renameSync(tampered, path.join(root, 'app', 'mods', 'vector'));
         const unsigned = path.join(root, 'app', 'mods', 'plain');
@@ -246,9 +279,12 @@ describe('loader integration', () => {
         // Signed with the test key, which the host does not trust.
         expect(byId.vector.signature).toMatchObject({ status: 'invalid', reason: 'unknown-key' });
         expect(byId.plain.signature).toEqual({ status: 'unsigned', reason: null, keyId: null, keyLabel: null, signedAt: null });
+        expect(byId['beta-signature-fixture'].signature).toEqual({
+            status: 'beta', reason: null, keyId: 'folium-beta-2026-1', keyLabel: 'Folium beta', signedAt: expect.any(String),
+        });
 
         // The label never enables anything: every mod still goes through the (declined) confirmation.
-        for (const modId of ['signature-fixture', 'vector', 'plain']) {
+        for (const modId of ['signature-fixture', 'vector', 'plain', 'beta-signature-fixture']) {
             expect((await system.setModEnabled(modId, true)).error).toBe('enable-declined');
         }
         expect(dialogDetails[0]).toContain('Signature: officially verified (Folium official, folium-2026-1)');
@@ -256,5 +292,9 @@ describe('loader integration', () => {
         expect(dialogDetails[1]).toContain('Signature: does not match (unknown-key)');
         expect(dialogDetails[1]).toContain('not security-audited');
         expect(dialogDetails[2]).toContain('Signature: none');
+        expect(dialogDetails[3]).toContain('Signature: preview build (Folium beta, folium-beta-2026-1)');
+        expect(dialogDetails[3]).toContain('passed the security review only');
+        expect(dialogDetails[3]).not.toContain('officially verified');
+        expect(dialogDetails[3]).not.toContain('official Folium signature');
     });
 });

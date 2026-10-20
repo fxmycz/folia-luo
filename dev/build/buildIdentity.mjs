@@ -5,6 +5,10 @@
 // 仓库名不写死：写死的话 fork 会原样继承，流量就和官方混在一起了。
 // fork 在自己的 Actions / Vercel 上构建时，环境变量自然是 fork 的仓库名。
 
+// 只有本仓库自己的 GitHub Actions 构建出来的才算官方版本。这里必须写死：
+// fork 的 Actions 里 GITHUB_REPOSITORY 是 fork 自己，本地构建根本没有 GITHUB_ACTIONS。
+export const OFFICIAL_BUILD_REPO = 'chthollyphile/folia-major';
+
 const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const COMMIT_PATTERN = /^[0-9a-f]{7,40}$/i;
 
@@ -45,4 +49,31 @@ export function resolveBuildRepo(env, readOriginUrl) {
 export function normalizeBuildCommit(commitHash) {
   const value = String(commitHash ?? '').trim();
   return COMMIT_PATTERN.test(value) ? value.toLowerCase() : 'dev';
+}
+
+// 构建类别：
+// - self-hosted：文档里给出的自部署方式——Docker 镜像（gateway.Dockerfile 设了 APP_RELEASE_CHANNEL=docker，
+//   官方 CI 推的镜像也算，因为服务是用户自己托管的）、Vercel、Cloudflare（Pages / Workers Builds）；
+// - official：本仓库 GitHub Actions 构建的（桌面版 release、nightly、canary）；
+// - unofficial：其余一切——fork 的 CI、本地构建、他人打包。
+// host 是自部署平台（docker / vercel / cloudflare），其他类别为 null。
+// 环境变量能被手动伪造，这个标记防的是「别人打包后把问题反馈到本仓库」，不是防恶意冒充。
+export function resolveBuildKind(env) {
+  if (env.APP_RELEASE_CHANNEL?.trim().toLowerCase() === 'docker') return { kind: 'self-hosted', host: 'docker' };
+  if (env.VERCEL === '1') return { kind: 'self-hosted', host: 'vercel' };
+  if (env.CF_PAGES === '1' || env.WORKERS_CI === '1') return { kind: 'self-hosted', host: 'cloudflare' };
+  if (env.GITHUB_ACTIONS === 'true' && String(env.GITHUB_REPOSITORY ?? '').trim() === OFFICIAL_BUILD_REPO) {
+    return { kind: 'official', host: null };
+  }
+  return { kind: 'unofficial', host: null };
+}
+
+// 开发服务器专用的构建类别覆盖：FOLIA_DEV_BUILD_KIND=official|self-hosted|unofficial，只在 vite serve 下生效。
+// 给 Playwright 这类要钉住某条反馈分支的场景用（vitest.config 同样把 __BUILD_KIND__ 钉成 official）；
+// vite build 一律忽略它，产物的类别仍只由 resolveBuildKind 决定，别人打包时拿它冒充不了官方。
+// 不需要覆盖时返回 null。
+export function resolveDevBuildKindOverride(command, env) {
+  if (command !== 'serve') return null;
+  const kind = env.FOLIA_DEV_BUILD_KIND?.trim().toLowerCase();
+  return kind === 'official' || kind === 'self-hosted' || kind === 'unofficial' ? { kind, host: null } : null;
 }

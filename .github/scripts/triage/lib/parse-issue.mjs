@@ -39,10 +39,14 @@ export function parseQr(title, body) {
     // 正文和补充评论里可能有多份报告，取最后一份的字段。
     const line = key => [...text.matchAll(new RegExp(`^${key}:\\s*(.+)$`, 'gm'))].at(-1)?.[1].trim() ?? null;
     const appVersion = line('app');
+    // build 行：official / self-hosted <平台> / unofficial (owner/repo@commit)；0.7.17 及更早的报告没有这一行，为 null。
+    const build = /^(official|self-hosted|unofficial)\b/.exec(line('build') ?? '')?.[1] ?? null;
     return {
         provider: (line('provider')?.split(/\s/)[0] ?? titleMatch?.[1] ?? '').toLowerCase() || null,
         appVersion: appVersion && appVersion !== 'unknown' ? appVersion : null,
         failure: line('failure'),
+        build,
+        origin: line('origin'),
         hasDiagnostics,
     };
 }
@@ -136,6 +140,9 @@ export function extractFacts({ title, body, labels, extraText = '' }, { template
     return {
         kind,
         qr,
+        // 构建类别：诊断报告的 build 行，或设置里复制的版本信息行末尾的固定标记（src/utils/buildProvenance.ts）。
+        unofficialBuild: qr?.build === 'unofficial' || /·\s*Unofficial build\b/.test(rawWithExtra),
+        selfHosted: qr?.build === 'self-hosted' || /·\s*Self-hosted\b/.test(rawWithExtra),
         version: extractVersion(rawWithExtra.replace(/例如[:：]\s*`[^`]*`/g, '').replace(/\[例如[:：][^\]]*\]/g, '')),
         deployment: extractDeployment(text) ?? (qr?.hasDiagnostics && /Electron\//.test(body ?? '') ? 'electron' : null),
         hasErrorLog: hasErrorLog(text),

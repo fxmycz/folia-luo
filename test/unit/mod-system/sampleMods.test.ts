@@ -8,13 +8,16 @@ import path from 'path';
 // manifest validates and the entry files it declares exist. Samples are the
 // first thing mod authors copy, so they must never drift from the contract.
 // They are also officially signed: editing a sample means re-signing it
-// (folium-compound: tools/sign.mjs), or this suite fails.
+// (folium-compound: tools/sign.mjs), or this suite fails. The samples listed in
+// BETA_SAMPLES are signed with the beta-channel key instead and must verify as
+// beta; every other sample must verify as officially verified.
 
 const require = createRequire(import.meta.url);
 const { validateManifest } = require('../../../electron/modSystem/manifest.cjs');
 const { verifyModSignature } = require('../../../electron/modSystem/modSignature.cjs');
 
 const MODS_DIR = path.resolve(__dirname, '../../../mods');
+const BETA_SAMPLES = new Set(['sample-beta-hello']);
 const modDirectories = fs.readdirSync(MODS_DIR, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
     .map((entry) => path.join(MODS_DIR, entry.name));
@@ -37,8 +40,13 @@ describe('repository sample mods', () => {
         }
     });
 
-    it.each(modDirectories.map((directory) => [path.basename(directory), directory]))('%s carries a valid official signature', (_name, directory) => {
+    it.each(modDirectories.map((directory) => [path.basename(directory), directory]))('%s carries a valid signature of its channel', (name, directory) => {
         const manifest = JSON.parse(fs.readFileSync(path.join(directory, 'mod.json'), 'utf8'));
-        expect(verifyModSignature(directory, manifest)).toMatchObject({ status: 'verified' });
+        expect(verifyModSignature(directory, manifest)).toMatchObject({ status: BETA_SAMPLES.has(name) ? 'beta' : 'verified' });
+    });
+
+    it('has a beta-channel sample for every name in BETA_SAMPLES', () => {
+        const names = modDirectories.map((directory) => path.basename(directory));
+        BETA_SAMPLES.forEach((name) => expect(names).toContain(name));
     });
 });

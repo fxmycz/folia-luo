@@ -48,8 +48,6 @@ export type UnavailableReplacementRequest = {
     options: PlaybackNavigationOptions;
 };
 
-export type SkipPromptMessageKey = 'status.songUnavailablePrompt' | 'status.playbackErrorPrompt';
-
 export type PlaybackSnapshot = {
     currentSong: SongResult | null;
     lyrics: LyricData | null;
@@ -77,7 +75,7 @@ export type NowPlayingClockState = {
 };
 
 export type WindowPlaybackHandoffUiState = {
-    currentView: 'home' | 'player' | 'lattice' | 'lx';
+    currentView: 'home' | 'player' | 'lattice';
     playerChromeHidden: boolean;
     mainWindowBorderVisible: boolean;
     transparentModeEnabled: boolean;

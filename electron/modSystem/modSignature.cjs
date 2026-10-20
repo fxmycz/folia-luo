@@ -2,8 +2,10 @@
 // Official mod signatures. A mod that ships `folium.sig.json` carries an
 // Ed25519 signature, made with a Folium signing key, over its signed digest,
 // its id and its version. The loader checks it against the public keys built
-// into the host (trustedKeys.cjs) and reports one of three states:
+// into the host (trustedKeys.cjs) and reports one of four states:
 //   - verified: signed by a trusted key over exactly the files on disk;
+//   - beta:     the same, but by a preview-channel key (`channel: 'beta'`): the
+//     mod passed the security review only, not a review of whether it works;
 //   - unsigned: no signature file (an unreviewed third-party mod);
 //   - invalid:  a signature file that does not check out (edited after signing,
 //     unknown or revoked key, revoked mod, malformed file).
@@ -156,6 +158,12 @@ const publicKeyFor = (key) => {
 
 const invalid = (reason, extra = {}) => ({ status: 'invalid', reason, ...extra });
 
+// The status a valid signature reports, by the signing key's `channel`. A key
+// without one is a release key. Any other channel is not one this host knows,
+// so its signatures show as invalid (`unknown-key`) instead of falling back to
+// officially verified.
+const CHANNEL_STATUS = Object.freeze({ release: 'verified', beta: 'beta' });
+
 /*
  * Verifies a mod directory's signature against the host's trusted keys.
  * `manifest` is the validated manifest; the signature must name the same id
@@ -188,6 +196,9 @@ const verifyModSignature = (dirPath, manifest, options = {}) => {
     const base = { keyId: record.keyId, signedAt: record.signedAt };
     const key = keys.find((candidate) => candidate.keyId === record.keyId);
     if (!key) return invalid('unknown-key', base);
+    // Only an absent channel means release; null, '' or anything unlisted is unknown.
+    const channel = key.channel === undefined ? 'release' : key.channel;
+    if (!Object.hasOwn(CHANNEL_STATUS, channel)) return invalid('unknown-key', base);
     const withKey = { ...base, keyLabel: key.label ?? null };
     if (key.revoked) return invalid('revoked-key', withKey);
     if (record.modId !== manifest?.id || record.modVersion !== manifest?.version) {
@@ -212,10 +223,11 @@ const verifyModSignature = (dirPath, manifest, options = {}) => {
     if (!actual) return invalid('unverifiable', withKey);
     if (actual !== record.digest) return invalid('digest-mismatch', withKey);
     if (revokedDigests.includes(actual)) return invalid('revoked-mod', withKey);
-    return { status: 'verified', ...withKey };
+    return { status: CHANNEL_STATUS[channel], ...withKey };
 };
 
 module.exports = {
+    CHANNEL_STATUS,
     SIGNATURE_FILE,
     SIGNATURE_FORMAT,
     SIGNATURE_VERSION,

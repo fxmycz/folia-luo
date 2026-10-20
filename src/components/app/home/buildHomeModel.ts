@@ -3,8 +3,10 @@ import type { GridViewCollectionDescriptor } from './gridViewCollectionAdapters'
 import type { HomeSurfaceProps } from './homeSurfaceTypes';
 import { resolveSearchSource, type SearchSource } from '../../../stores/useSearchNavigationStore';
 import type { ProviderAccountSummary } from '../../../types/onlineMusic';
-import type { LibraryAccountController } from '../../../library/core/contracts/account';
+import type { PlaybackNavigationOptions } from '../../../types/appPlayback';
+import type { LibraryAccountController } from '../../../library/core/account/account.contract';
 import { openSettings } from '../../../stores/useSettingsModalStore';
+import { noteQueueStarted } from '../playing-song-locator/playingSongLocator';
 
 // src/components/app/home/buildHomeModel.ts
 
@@ -30,13 +32,10 @@ export type HomeModelDeps = {
     account: LibraryAccountController;
     /** controller 快照里的当前平台摘要（未变时身份稳定）；首页的账户与在线歌单优先取它。 */
     activeProvider?: ProviderAccountSummary;
-    playSong: HomeSurfaceProps['onPlaySong'];
+    // App's playSong: its 4th argument is navigation options, not the surface's `from`, so it is wrapped below.
+    playSong: (song: SongResult, queue?: SongResult[], isFmCall?: boolean, options?: PlaybackNavigationOptions) => void;
     navigateToPlayer: HomeSurfaceProps['onBackToPlayer'];
     navigateToLattice: NonNullable<HomeSurfaceProps['onOpenLattice']>;
-    /** 自定义音源版块入口（应用导航的 navigateToLx）；首页页签行在「本地」之后渲染这枚按钮。 */
-    navigateToLxSource: NonNullable<HomeSurfaceProps['onOpenLxSource']>;
-    /** 墙上工具面板的宿主动作（library/app/useLibraryStageToolsPort，身份稳定）。 */
-    stageTools?: HomeSurfaceProps['stageTools'];
     /** fb3：暂停 / 继续（应用的 togglePlay；useHomeModel 给它稳定身份）。 */
     togglePlayback: NonNullable<HomeSurfaceProps['onTogglePlayback']>;
     /** fb3：按「播放后进入的视图」进入播放视图（播放胶囊的同一个导航）。 */
@@ -80,8 +79,6 @@ export const buildHomeModel = ({
     playSong,
     navigateToPlayer,
     navigateToLattice,
-    navigateToLxSource,
-    stageTools,
     togglePlayback,
     enterPlaybackView,
     refreshOnlineProviderPlaylists,
@@ -116,6 +113,9 @@ export const buildHomeModel = ({
     onPopCollectionTo,
     onBackCollection,
 }: BuildHomeModelParams): HomeViewModel => {
+    // Whatever starts a queue from the home screen says where: on a collection's page (`from`),
+    // or anywhere else (the explore tab, an artist's page, a card's own "play", the personal
+    // radio). "Locate the playing song" goes by it (playing-song-locator/playingSongLocator.ts).
     return {
         account,
         onOpenCollection,
@@ -123,11 +123,13 @@ export const buildHomeModel = ({
         onPopCollectionTo,
         onBackCollection,
         surfaceProps: {
-            onPlaySong: playSong,
+            onPlaySong: (song, queue, isFmCall, from, options) => {
+                // (A song played with no queue of its own joins the queue there is.)
+                if (queue?.length) noteQueueStarted(from ?? null, [song, ...queue]);
+                playSong(song, queue, isFmCall, options);
+            },
             onBackToPlayer: navigateToPlayer,
             onOpenLattice: navigateToLattice,
-            onOpenLxSource: navigateToLxSource,
-            stageTools,
             onTogglePlayback: togglePlayback,
             onEnterPlaybackView: enterPlaybackView,
             onRefreshUser: () => refreshOnlineProviderPlaylists(),
@@ -136,7 +138,10 @@ export const buildHomeModel = ({
             playlists: activeProvider?.collections.filter(collection => collection.type !== 'cloud') ?? playlists,
             cloudPlaylist: activeProvider?.collections.find(collection => collection.type === 'cloud') ?? cloudPlaylist,
             currentTrack: currentSong,
-            onPlayAll: playAll,
+            onPlayAll: (songs, from) => {
+                noteQueueStarted(from ?? null, songs);
+                playAll(songs);
+            },
             onAddAllToQueue: addAllToQueue,
             onAddSongToQueue: addSongToQueue,
             onStatusMessage,

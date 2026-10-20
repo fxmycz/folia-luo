@@ -13,6 +13,7 @@ import {
 import type { WallCameraRange } from '../../../components/wall/finiteWall';
 import { BRAVAIS_CAMERA_TWEEN_S, BRAVAIS_CULL_EDGE_MARGIN, BRAVAIS_OVERSCAN } from './bravaisConstants';
 import { rubberBand } from './bravaisFiniteWall';
+import { computeBravaisFrame, getTiltReach } from './bravaisFrame';
 import type { BravaisFrameState } from './useBravaisFrame';
 
 // src/library/suites/bravais/useBravaisCamera.ts
@@ -25,10 +26,33 @@ const MAX_RESERVED_VIEWPORTS = 3;
 
 const area = (bounds: Bounds) => (bounds.right - bounds.left) * (bounds.bottom - bounds.top);
 
-/** 当前可见的世界范围（缝张开时两半各让出半个开口，左右再放宽一个开口宽）。 */
-export const getVisibleWorldBounds = (state: BravaisFrameState): Bounds | null => (
-    state.view ? getViewWorldBounds(state.center, state.view, { seamWidth: state.openWidth }) : null
-);
+/**
+ * 当前可见的世界范围（缝张开时两半各让出半个开口，左右再放宽一个开口宽）。倾斜时再按反转回去的视口放宽
+ * （getTiltReach）：支点跟着缝走，缝拖远了视口会整块偏开，不能只靠 overscan 兜着。
+ */
+export const getVisibleWorldBounds = (state: BravaisFrameState): Bounds | null => {
+    const { view } = state;
+    if (!view) return null;
+    const bounds = getViewWorldBounds(state.center, view, { seamWidth: state.openWidth });
+    if (Math.abs(state.tiltDeg) < 0.001 || state.anchorX === null) return bounds;
+    const { tilt } = computeBravaisFrame({
+        center: state.center,
+        view,
+        anchorX: state.anchorX,
+        openWidth: state.openWidth,
+        contentWidth: state.contentWidth,
+        hidden: state.hidden,
+        poster: state.poster,
+        tiltDeg: state.tiltDeg,
+    });
+    const reach = getTiltReach(view, tilt);
+    return {
+        left: bounds.left - reach.left / view.scale,
+        right: bounds.right + reach.right / view.scale,
+        top: bounds.top - reach.top / view.scale,
+        bottom: bounds.bottom + reach.bottom / view.scale,
+    };
+};
 
 /** 可见范围离已裁剪范围的边缘还剩不到一截 overscan 时才需要重新裁剪。 */
 export const needsRecull = (visible: Bounds, culled: Bounds | null) => {

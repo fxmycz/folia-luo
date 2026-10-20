@@ -85,6 +85,9 @@ interface ImportDiffPlan {
 // In-memory storage for hot-path access. Persistent recovery uses directory handles from IndexedDB.
 const fileHandleMap = new Map<string, FileSystemFileHandle>();
 const localCoverAssetRequestMap = new Map<string, Promise<LocalSong>>();
+// 解析过、确认没有内嵌封面的文件：歌曲 id → 当时文件的「大小:修改时间」。没封面时没有可落库的东西，
+// 不记下来的话每次播放都要在出声前把文件重新解析一遍。文件被替换后大小或修改时间变了，就会重新解析。
+const songsWithoutEmbeddedCover = new Map<string, string>();
 const BROWSER_AUDIO_EXTENSIONS = /\.(mp3|flac|m4a|wav|ogg|opus|aac)$/i;
 const ELECTRON_FALLBACK_AUDIO_EXTENSIONS = /\.(alac|ape|wv|tta|wma|aif|aiff|caf)$/i;
 const KNOWN_AUDIO_EXTENSIONS = /\.(mp3|flac|m4a|wav|ogg|opus|aac|alac|ape|wv|tta|wma|aif|aiff|caf)$/i;
@@ -1683,8 +1686,14 @@ async function extractAndPersistSongCover(
     fileHandle: FileSystemFileHandle,
 ): Promise<LocalSong> {
     const file = await fileHandle.getFile();
+    const fileRevision = `${file.size}:${file.lastModified}`;
+    if (songsWithoutEmbeddedCover.get(song.id) === fileRevision) return song;
     const metadata = await extractEmbeddedMetadata(file, true);
-    if (!metadata.cover || !metadata.coverAssetId) return song;
+    if (!metadata.cover || !metadata.coverAssetId) {
+        songsWithoutEmbeddedCover.set(song.id, fileRevision);
+        return song;
+    }
+    songsWithoutEmbeddedCover.delete(song.id);
     stageLocalCoverAsset(metadata.coverAssetId, metadata.cover);
 
     const updatedSong: LocalSong = {
@@ -1757,6 +1766,7 @@ export async function deleteSongsByIds(songIds: string[]): Promise<void> {
     uniqueSongIds.forEach(id => {
         fileHandleMap.delete(id);
         localCoverAssetRequestMap.delete(id);
+        songsWithoutEmbeddedCover.delete(id);
     });
     await Promise.all([
         dbDeleteLocalSongs(uniqueSongIds),
@@ -1869,6 +1879,7 @@ async function deleteFolderContents(folderName: string): Promise<void> {
     songIdsToDelete.forEach(id => {
         fileHandleMap.delete(id);
         localCoverAssetRequestMap.delete(id);
+        songsWithoutEmbeddedCover.delete(id);
     });
     await Promise.all([
         dbDeleteLocalSongs(songIdsToDelete),

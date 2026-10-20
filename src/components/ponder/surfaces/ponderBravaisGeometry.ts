@@ -357,9 +357,9 @@ const FOCUS_ENTER: PonderRelativeRect = { left: 0.18, bottom: 0.06, width: 0.1, 
 const TOOLS_BUTTON: PonderRelativeRect = { right: 0.022, bottom: 0.035, width: 0.042, square: true };
 const TOOLS_PANEL: PonderRelativeRect = { right: 0.022, bottom: 0.13, width: 0.26, height: 0.6 };
 
-/** 相对 toolsPanel：顶上那排四格快捷动作（定位、洗牌、主题、前往 Lattice）。 */
-export const BRAVAIS_TOOLS_QUICK: readonly PonderRelativeRect[] = [0, 1, 2, 3].map(index => ({
-    left: 0.04 + index * 0.24, width: 0.2, top: 0.04, height: 0.2,
+/** 相对 toolsPanel：顶上那排六格纯图标快捷动作（定位、洗牌、主题、队列、前往 Lattice、播放页）。 */
+export const BRAVAIS_TOOLS_QUICK: readonly PonderRelativeRect[] = [0, 1, 2, 3, 4, 5].map(index => ({
+    left: 0.04 + index * 0.153, width: 0.135, top: 0.07, height: 0.14,
 }));
 /** 相对 toolsPanel：各行。 */
 export const BRAVAIS_TOOLS_ROWS = {
@@ -395,7 +395,7 @@ export const BRAVAIS_WALL_GEOMETRY = {
     tools: TOOLS_BUTTON,
     toolsPanel: TOOLS_PANEL,
     /** 相对 toolsPanel。 */
-    toolsLattice: BRAVAIS_TOOLS_QUICK[3],
+    toolsLattice: BRAVAIS_TOOLS_QUICK[4],
     toolsLook: BRAVAIS_TOOLS_ROWS.look,
 } satisfies Record<string, PonderRelativeRect>;
 

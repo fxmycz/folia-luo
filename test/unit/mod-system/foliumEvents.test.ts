@@ -8,7 +8,7 @@ import {
     hasFoliumEventHandlers,
     removeFoliumEventHandlers,
 } from '@/mods/folium/events';
-import { useFoliumStatusStore } from '@/mods/folium/status';
+import { clearFoliumIssues, useFoliumStatusStore } from '@/mods/runtime/status';
 import type { FoliumBeforePlayEvent, FoliumLyricsTransformEvent } from '@/mods/folium/contract';
 import type { ModRuntimeInfo } from '@/mods/types';
 import { createFoliumPlaybackService, createFoliumUiService, registerFoliumHostActions } from '@/mods/folium/services';
@@ -21,7 +21,7 @@ import { buildLineRenderHints } from '@/utils/lyrics/renderHints';
 
 afterEach(() => {
     ['mod-a', 'mod-b'].forEach(removeFoliumEventHandlers);
-    useFoliumStatusStore.setState({ issues: {} });
+    ['mod-a', 'mod-b'].forEach(clearFoliumIssues);
     registerFoliumHostActions(null);
     vi.useRealTimers();
 });
@@ -112,7 +112,12 @@ const fakeActions = () => ({
     play: vi.fn(), pause: vi.fn(), toggle: vi.fn(), seek: vi.fn(), seekToLyricTime: vi.fn(), next: vi.fn(), previous: vi.fn(),
     playSongRef: vi.fn(async () => true), enqueueSongRef: vi.fn(() => true),
     shuffleQueue: vi.fn(() => true), toggleLike: vi.fn(() => false),
+    getVolume: vi.fn(() => ({ volume: 0.4, muted: true })), setVolume: vi.fn(), setMuted: vi.fn(),
+    getLoopMode: vi.fn(() => 'all' as const), setLoopMode: vi.fn(),
+    getQueue: vi.fn(() => ({ items: [], length: 0, currentIndex: -1, kind: 'queue' as const })),
+    playQueueItem: vi.fn(async () => true),
     toast: vi.fn(), openPlayerPanel: vi.fn(), navigate: vi.fn(), openVolume: vi.fn(),
+    getLyricLines: () => [], refreshLyrics: vi.fn(),
 });
 
 describe('folium services', () => {
@@ -151,6 +156,89 @@ describe('folium services', () => {
         expect(control.toggleLike()).toBe(false);
         expect(actions.shuffleQueue).toHaveBeenCalledTimes(1);
         expect(actions.toggleLike).toHaveBeenCalledTimes(1);
+    });
+
+    it('reads volume, repeat mode and the queue freely, in the main window only', () => {
+        const actions = fakeActions();
+        registerFoliumHostActions(actions);
+        const readOnly = createFoliumPlaybackService(mod(), 'main');
+        expect(readOnly.getVolume()).toEqual({ volume: 0.4, muted: true });
+        expect(readOnly.getLoopMode()).toBe('all');
+        expect(readOnly.getQueue().kind).toBe('queue');
+        const exported = createFoliumPlaybackService(mod({ permissions: ['playback.control'] }), 'export');
+        expect(() => exported.getVolume()).toThrow('playback-unavailable-in-export-context');
+        expect(() => exported.getLoopMode()).toThrow('playback-unavailable-in-export-context');
+        expect(() => exported.getQueue()).toThrow('playback-unavailable-in-export-context');
+    });
+
+    it('sets volume, mute and repeat mode behind playback.control, checking the values first', () => {
+        const actions = fakeActions();
+        registerFoliumHostActions(actions);
+        const readOnly = createFoliumPlaybackService(mod(), 'main');
+        expect(() => readOnly.setVolume(0.5)).toThrow('permission-denied:playback.control');
+        expect(() => readOnly.setMuted(true)).toThrow('permission-denied:playback.control');
+        expect(() => readOnly.setLoopMode('one')).toThrow('permission-denied:playback.control');
+
+        const control = createFoliumPlaybackService(mod({ permissions: ['playback.control'] }), 'main');
+        control.setVolume(0.25);
+        control.setVolume(1.5);
+        control.setVolume(-2);
+        expect(actions.setVolume.mock.calls).toEqual([[0.25], [1], [0]]);
+        expect(() => control.setVolume(Number.NaN)).toThrow('playback.setVolume requires a finite number');
+        expect(() => control.setVolume(Infinity)).toThrow('playback.setVolume requires a finite number');
+        expect(() => control.setVolume('0.5' as never)).toThrow('playback.setVolume requires a finite number');
+
+        control.setMuted(false);
+        expect(actions.setMuted).toHaveBeenCalledWith(false);
+        expect(() => control.setMuted(1 as never)).toThrow('playback.setMuted requires a boolean');
+
+        control.setLoopMode('one');
+        expect(actions.setLoopMode).toHaveBeenCalledWith('one');
+        expect(() => control.setLoopMode('shuffle' as never)).toThrow('playback.setLoopMode: unknown mode "shuffle"');
+        expect(actions.setVolume).toHaveBeenCalledTimes(3);
+        expect(actions.setMuted).toHaveBeenCalledTimes(1);
+        expect(actions.setLoopMode).toHaveBeenCalledTimes(1);
+
+        const exported = createFoliumPlaybackService(mod({ permissions: ['playback.control'] }), 'export');
+        expect(() => exported.setVolume(0.5)).toThrow('playback-unavailable-in-export-context');
+    });
+
+    it('pages the queue: limit defaults to 500 and is clamped, a given value must be finite', () => {
+        const actions = fakeActions();
+        registerFoliumHostActions(actions);
+        const playback = createFoliumPlaybackService(mod(), 'main');
+        playback.getQueue();
+        playback.getQueue({ offset: 20.7, limit: 50.9 });
+        playback.getQueue({ limit: 0 });
+        playback.getQueue({ offset: -3, limit: 10_000 });
+        playback.getQueue(null as never);
+        expect(actions.getQueue.mock.calls).toEqual([
+            [undefined, 500],
+            [20, 50],
+            [undefined, 1],
+            [-3, 500],
+            [undefined, 500],
+        ]);
+        // A value that is given but not a finite number throws instead of reading some other page.
+        expect(() => playback.getQueue({ offset: Number.NaN })).toThrow('playback.getQueue: offset must be a finite number');
+        expect(() => playback.getQueue({ limit: Infinity })).toThrow('playback.getQueue: limit must be a finite number');
+        expect(() => playback.getQueue({ offset: '2' as never })).toThrow('playback.getQueue: offset must be a finite number');
+        expect(actions.getQueue).toHaveBeenCalledTimes(5);
+    });
+
+    it('plays a queue entry behind playback.control and needs an integer index', async () => {
+        const actions = fakeActions();
+        registerFoliumHostActions(actions);
+        await expect(createFoliumPlaybackService(mod(), 'main').playQueueItem(0)).rejects.toThrow('permission-denied:playback.control');
+        const control = createFoliumPlaybackService(mod({ permissions: ['playback.control'] }), 'main');
+        await expect(control.playQueueItem(2, 'song-7')).resolves.toBe(true);
+        await expect(control.playQueueItem(3)).resolves.toBe(true);
+        expect(actions.playQueueItem.mock.calls).toEqual([[2, 'song-7'], [3, undefined]]);
+        await expect(control.playQueueItem(1.5)).rejects.toThrow('playback.playQueueItem requires an integer index');
+        await expect(control.playQueueItem(Number.NaN)).rejects.toThrow('playback.playQueueItem requires an integer index');
+        expect(actions.playQueueItem).toHaveBeenCalledTimes(2);
+        const exported = createFoliumPlaybackService(mod({ permissions: ['playback.control'] }), 'export');
+        await expect(exported.playQueueItem(0)).rejects.toThrow('playback-unavailable-in-export-context');
     });
 
     it('opens the volume panel without a permission', () => {

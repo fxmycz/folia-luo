@@ -1,9 +1,12 @@
 import type {
+    ModClearCacheResult,
     ModFfmpegStatus,
     ModLogEntry,
+    ModMainCallStats,
     ModRuntimeInfo,
     ModRuntimeSnapshot,
     ModSetEnabledResult,
+    ModStorageUsageResult,
     ModsListPayload,
     ModExportProgress,
 } from './types';
@@ -21,6 +24,7 @@ const EMPTY_PAYLOAD: ModsListPayload = {
     mods: [],
     ffmpeg: { available: false, path: null, version: null, candidates: [] },
     directories: [],
+    startSkipped: false,
 };
 
 export const listMods = async (): Promise<ModsListPayload> => {
@@ -34,9 +38,45 @@ export const listMods = async (): Promise<ModsListPayload> => {
             mods: Array.isArray(payload?.mods) ? payload.mods : [],
             ffmpeg: payload?.ffmpeg ?? EMPTY_PAYLOAD.ffmpeg,
             directories: Array.isArray(payload?.directories) ? payload.directories : [],
+            startSkipped: payload?.startSkipped === true,
         };
     } catch {
         return EMPTY_PAYLOAD;
+    }
+};
+
+/** What the main-process gate counted for each mod's Node entry, by mod id; empty without the bridge. */
+export const getModCallStats = async (): Promise<Record<string, ModMainCallStats>> => {
+    try {
+        const response = await bridge()?.getModCallStats?.();
+        return response?.stats ?? {};
+    } catch {
+        return {};
+    }
+};
+
+/**
+ * Tells the main process that this window's start has ended: every client's start has returned
+ * and the first screen is up. The start note is taken up on it (electron/modSystem/safeStart.cjs).
+ */
+export const reportModsStartSettled = async (): Promise<void> => {
+    try {
+        await bridge()?.reportModsStartSettled?.();
+    } catch {
+        // The note then stays, and the next start asks once: the safe side.
+    }
+};
+
+/**
+ * Tells the main process that this window's page is answering while its start is under way. If
+ * the app is left the normal way before the start has ended, the start note is taken up only when
+ * this was heard a moment before: a page stuck on a mod cannot say it.
+ */
+export const reportModsStartAlive = async (): Promise<void> => {
+    try {
+        await bridge()?.reportModsStartAlive?.();
+    } catch {
+        // Nothing to do here: the main process goes by what it heard last.
     }
 };
 
@@ -144,6 +184,18 @@ export const installModFromZip = async (
     zipPath: string,
 ): Promise<{ ok: boolean; id?: string; error?: string }> => {
     const response = await bridge()?.installModFromZip(zipPath);
+    return response ?? { ok: false, error: 'no-electron-bridge' };
+};
+
+/** Bytes a mod keeps on disk (data and cache); disabled mods included, broken entries refused. */
+export const getModStorageUsage = async (modId: string): Promise<ModStorageUsageResult> => {
+    const response = await bridge()?.getModStorageUsage(modId);
+    return response ?? { ok: false, error: 'no-electron-bridge' };
+};
+
+/** Empties a mod's cache directory (`api.storage.paths.cache`); the directory itself stays. */
+export const clearModCache = async (modId: string): Promise<ModClearCacheResult> => {
+    const response = await bridge()?.clearModCache(modId);
     return response ?? { ok: false, error: 'no-electron-bridge' };
 };
 

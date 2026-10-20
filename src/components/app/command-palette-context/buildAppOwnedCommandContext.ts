@@ -1,7 +1,8 @@
 import type { PlaybackNavigationOptions } from '../../../types/appPlayback';
 import type { SongResult } from '../../../types';
 import { useAppViewStore } from '../../../stores/useAppViewStore';
-import { focusLatticeCurrentSong, useLatticeControlsStore } from '../../../stores/useLatticeControlsStore';
+import { locatePlayingSong } from '../playing-song-locator/playingSongLocator';
+import { locatePlayingSongOnWall } from '../lattice/wallLocate';
 import type { CommandPaletteContext } from '../../command-palette/types';
 import { setStatusMessage } from '../../../stores/useStatusMessageStore';
 import { useAudioSettingsStore } from '../../../stores/useAudioSettingsStore';
@@ -38,7 +39,7 @@ export type PlaybackCommandContextDeps = Pick<
 
 export type NavigationCommandContextDeps = Pick<
     CommandPaletteContext['navigation'],
-    | 'navigateToHome' | 'navigateToPlayer' | 'navigateToLattice' | 'navigateToLx' | 'setHomeViewTab' | 'toggleBrowserFullscreen'
+    | 'navigateToHome' | 'navigateToPlayer' | 'navigateToLattice' | 'selectHomeViewTab' | 'toggleBrowserFullscreen'
     | 'toggleRemoteControlWindow' | 'toggleMainWindowAlwaysOnTop'
 >;
 
@@ -70,6 +71,17 @@ export const buildPlaybackCommandContext = (
         volume: audio.volume,
         isMuted: audio.isMuted,
         setVolume: audio.handleSetVolume,
+        // Read from the store at the press, not from this snapshot: a held key repeats faster
+        // than the context is rebuilt, and each step has to start where the last one ended. Turning
+        // it up also unmutes, like a keyboard's volume key: otherwise the number rises in silence.
+        stepVolume: (delta) => {
+            const live = useAudioSettingsStore.getState();
+            if (delta > 0 && live.isMuted) {
+                live.handleSetMuted(false);
+            }
+            const next = Math.round(Math.min(1, Math.max(0, live.volume + delta)) * 100) / 100;
+            live.handleSetVolume(next);
+        },
         toggleMute: audio.handleToggleMute,
         openAddToPlaylist,
         canAddCurrentSongToPlaylist: useAddToPlaylistStore.getState().availability.canAdd,
@@ -84,9 +96,10 @@ export const buildNavigationCommandContext = (
     deps: NavigationCommandContextDeps,
 ): CommandPaletteContext['navigation'] => ({
     ...deps,
-    focusLatticeCurrentSong,
-    canFocusLatticeCurrentSong: Boolean(useLatticeControlsStore.getState().focusCurrentSong),
+    locatePlayingSongOnWall,
+    locatePlayingSong,
     isWallpaperMode: useDesktopSettingsStore.getState().wallpaperMode,
+    isWindowAlwaysOnTopSupported: useDesktopSettingsStore.getState().windowAlwaysOnTopSupported,
 });
 
 export const buildPanelCommandContext = (

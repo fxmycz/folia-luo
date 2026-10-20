@@ -21,6 +21,19 @@ export type WallViewCamera = { x: number; y: number; scale: number };
 
 export const getViewLineX = (view: WallView) => view.lineX ?? view.width / 2;
 
+/**
+ * The world layer's CSS transform for a camera, with the translation snapped to whole device pixels.
+ * The world is deliberately not `will-change: transform` (see wall.css), and without that hint Chromium
+ * aligns the layer's raster to the pixel grid: every change in the fractional part of the translation
+ * throws the tiles away and rasterizes the whole visible wall again, i.e. on every frame of a wheel glide,
+ * a drag or a camera tween. Moving in whole device pixels keeps that fraction fixed, so panning only moves
+ * tiles, the same way the browser snaps its own scroll offsets.
+ */
+export const formatWorldTransform = (x: number, y: number, scale: number, devicePixelRatio = window.devicePixelRatio || 1) => {
+    const snap = (value: number) => Math.round(value * devicePixelRatio) / devicePixelRatio;
+    return `translate3d(${snap(x)}px, ${snap(y)}px, 0) scale(${scale})`;
+};
+
 export const viewCenterFromCamera = (camera: WallViewCamera, view: WallView): WallViewCenter => ({
     x: (getViewLineX(view) - camera.x) / camera.scale,
     y: (view.height / 2 - camera.y) / camera.scale,

@@ -1,3 +1,4 @@
+import { normalizeRandomVisualizerModes } from '../../utils/randomVisualizerModes';
 import { sanitizeDualTheme } from '../themeSanitizer';
 // 背景模式没有 mod 投稿通道，静态清单与活注册表在任何时刻都等价。
 import { isBuiltinVisualizerBackgroundMode } from '../../types/visualizerModes';
@@ -46,6 +47,8 @@ const parseSyncedVisualSettings = (value: Record<string, unknown>): SyncedVisual
 
     if (typeof value.followSystemTheme === 'boolean') settings.followSystemTheme = value.followSystemTheme;
     if (typeof value.visualizerMode === 'string' && value.visualizerMode.trim()) settings.visualizerMode = value.visualizerMode;
+    if (typeof value.randomVisualizerModePerSong === 'boolean') settings.randomVisualizerModePerSong = value.randomVisualizerModePerSong;
+    if (Array.isArray(value.randomVisualizerModes)) settings.randomVisualizerModes = normalizeRandomVisualizerModes(value.randomVisualizerModes);
     if (value.visualizerBackgroundMode === null) settings.visualizerBackgroundMode = null;
     else if (isVisualizerBackgroundMode(value.visualizerBackgroundMode)) settings.visualizerBackgroundMode = value.visualizerBackgroundMode;
     if (isFiniteNumber(value.backgroundOpacity)) settings.backgroundOpacity = value.backgroundOpacity;
@@ -70,6 +73,8 @@ const parseSyncedVisualSettings = (value: Record<string, unknown>): SyncedVisual
     else if (typeof value.subtitleFontFamily === 'string') settings.subtitleFontFamily = value.subtitleFontFamily;
     if (isStringArray(value.subtitleFontFallbackFamilies)) settings.subtitleFontFallbackFamilies = value.subtitleFontFallbackFamilies;
     if (isRecord(value.visualizerTunings)) settings.visualizerTunings = value.visualizerTunings;
+    // Frozen: the 13 lyric-style tunings below predate the visualizerTunings bundle, which carries any
+    // new style. Do not add a lyric style here.
     if (value.classicTuning !== undefined) settings.classicTuning = value.classicTuning;
     if (value.cadenzaTuning !== undefined) settings.cadenzaTuning = value.cadenzaTuning;
     if (value.partitaTuning !== undefined) settings.partitaTuning = value.partitaTuning;

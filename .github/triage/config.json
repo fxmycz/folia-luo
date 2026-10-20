@@ -11,6 +11,9 @@
       "bot: skip": { "color": "ededed", "description": "triage bot 跳过此条目" },
       "bot: auto-closed": { "color": "c5def5", "description": "由 triage bot 自动关闭，便于维护者审计" },
       "bot: rate-limited": { "color": "f9d0c4", "description": "触发熔断，LLM 分类延后补跑" },
+      "unofficial build": { "color": "d93f0b", "description": "非官方构建：不是本仓库 CI 构建、也不是文档里的自部署方式（fork、本地构建、他人打包）" },
+      "self-hosted": { "color": "bfdadc", "description": "自部署版本：Docker、Vercel 或 Cloudflare" },
+      "deployment config": { "color": "d93f0b", "description": "自行部署的网页版没有配置或连不上后端，属于部署配置问题" },
       "module: lattice": { "color": "1d76db", "description": "Lattice 队列拼贴视图" },
       "module: command": { "color": "1d76db", "description": "命令面板与快捷键" },
       "module: playback": { "color": "1d76db", "description": "播放、队列、音频输出与播放器界面" },
@@ -26,7 +29,7 @@
     "botMayAdd": [
       "bug", "enhancement", "question", "documentation", "duplicate", "invalid", "out of scope",
       "breaking-change", "scope too large", "需要他人协助",
-      "needs-info", "stale", "provider-request",
+      "needs-info", "stale", "provider-request", "unofficial build", "self-hosted", "deployment config",
       "bot: auto-closed", "bot: rate-limited", "module: *", "type: *"
     ],
     "botMayRemove": ["needs-info", "stale", "bot: rate-limited"]

@@ -1,15 +1,19 @@
 import { PlayerState } from '../../../types';
-import { Heart, ListX, Pause, Piano, Play, Repeat, Shuffle, SkipBack, SkipForward, Star, VolumeX } from 'lucide-react';
+import { Heart, ListX, Pause, Piano, Play, Repeat, Shuffle, SkipBack, SkipForward, Star, Volume1, Volume2, VolumeX } from 'lucide-react';
 import { executeModeCommand } from './executeModeCommand';
 import { queueCommand } from './queueCommand';
 import { volumeCommand } from './volumeCommand';
 import { fmModeCommand } from './fmModeCommand';
 import type { CommandPaletteCommand } from '../types';
 import { createToggleCommand, createReplayGainCommand, createSoundPresetCommand } from '../commandFactories';
+import { canShuffleQueue } from '../../../utils/playbackNeighbors';
 
 // src/components/command-palette/commands/playbackCommands.ts
 // Commands in the `playback` group: transport, queue, volume, Personal FM mode, ReplayGain, and
 // sound presets.
+
+/** One press of volume up or down, as a fraction of full volume. */
+const VOLUME_STEP = 0.05;
 
 export const playbackCommands: CommandPaletteCommand[] = [
     executeModeCommand,
@@ -79,6 +83,15 @@ export const playbackCommands: CommandPaletteCommand[] = [
             return true;
         },
     },
+    createToggleCommand(
+        'playback-toggle',
+        'playback',
+        'Play / Pause',
+        'Pause when playing, play when paused',
+        ['play pause', 'toggle playback', 'resume', '播放暂停', '暂停播放', '继续播放'],
+        context => context.playback.togglePlay(),
+        { icon: Play },
+    ),
     createToggleCommand('playback-next', 'playback', 'Next track', 'Play the next track', ['next', '下一首'], context => context.playback.next(), { icon: SkipForward, executeShortcut: 'n' }),
     createToggleCommand('playback-prev', 'playback', 'Previous track', 'Play the previous track', ['prev', 'previous', '上一首'], context => context.playback.prev(), { icon: SkipBack, executeShortcut: 'b' }),
     createToggleCommand('playback-loop', 'playback', 'Toggle loop', 'Change loop mode', ['loop', '循环'], context => context.playback.toggleLoop(), { icon: Repeat, executeShortcut: 'l' }),
@@ -116,7 +129,30 @@ export const playbackCommands: CommandPaletteCommand[] = [
         context => context.playback.toggleMute(),
         { icon: VolumeX },
     ),
-    createToggleCommand('playback-shuffle', 'playback', 'Shuffle queue', 'Shuffle current play queue', ['shuffle', '打乱', '打乱队列'], context => context.playback.shuffleQueue(), { icon: Shuffle, executeShortcut: 'r', isAvailable: context => !context?.playback.isFmMode }),
+    createToggleCommand(
+        'playback-volume-up',
+        'playback',
+        'Volume up',
+        'Raise the volume by 5%',
+        ['louder', 'increase volume', '音量加', '调大音量', '大声'],
+        context => context.playback.stepVolume(VOLUME_STEP),
+        { icon: Volume2 },
+    ),
+    createToggleCommand(
+        'playback-volume-down',
+        'playback',
+        'Volume down',
+        'Lower the volume by 5%',
+        ['quieter', 'decrease volume', '音量减', '调小音量', '小声'],
+        context => context.playback.stepVolume(-VOLUME_STEP),
+        { icon: Volume1 },
+    ),
+    createToggleCommand('playback-shuffle', 'playback', 'Shuffle queue', 'Shuffle current play queue', ['shuffle', '打乱', '打乱队列'], context => context.playback.shuffleQueue(), {
+        icon: Shuffle,
+        executeShortcut: 'r',
+        // The palette's context does not say whether the stage is playing, so that part is false.
+        isAvailable: context => (context ? canShuffleQueue(context.playback.queue.length, context.playback.isFmMode, false) : true),
+    }),
     {
         id: 'playback-clear-queue',
         isAvailable: context => (context ? !context.playback.isFmMode && context.playback.queue.length > 0 : true),

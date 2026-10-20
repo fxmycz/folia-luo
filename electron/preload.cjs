@@ -6,21 +6,46 @@ contextBridge.exposeInMainWorld('electron', {
       // resolve the OS path of a dropped file from the renderer.
       getPathForFile: (file) => webUtils.getPathForFile(file),
     },
-    // Beat This! inference. Returns null whenever the weights or the runtime are not there,
-    // which is the browser build's permanent answer and any desktop install missing the model.
+    // Beat This! on the CPU, automix's fallback when the renderer's GPU path cannot run. Returns null
+    // whenever the weights are not there, which is the browser build's permanent answer.
     runBeatThis: (chunks) => ipcRenderer.invoke('automix-beat-this', chunks),
+    // The same model's WebGPU export ({ weights, manifest }) for the renderer's own GPU runtime, or null.
+    getBeatThisGpuWeights: (model) => ipcRenderer.invoke('automix-beat-this-gpu-weights', model),
+    getHtdemucsGpuWeights: () => ipcRenderer.invoke('automix-beat-this-gpu-weights', 'htdemucs'),
     separateStems: (request) => ipcRenderer.invoke('automix-htdemucs', request),
+    // Whether automix is switched on. While it is, the analysis worker keeps htdemucs loaded; switching
+    // it off releases it. See electron/analysis/host.cjs.
+    // (From the PR #750 re-review, 2026-10-19: not kept while it is on any more - the worker releases
+    // htdemucs a minute after each run - and switching it off still releases it at once.)
+    setAutomixEnabled: (enabled) => ipcRenderer.send('automix-enabled', enabled === true),
     // Which weights exist, answered without loading them. See the handler for why the settings page
     // is not allowed to infer this from "am I running in Electron".
     getAutomixModelsPresent: () => ipcRenderer.invoke('automix-models-present'),
     // One-way stage marks from the automix session into the runtime log. See services/automix/diag.ts.
     diagMark: (text) => ipcRenderer.send('automix-diag', text),
+    // Old automix models left in the folder an earlier version let the listener choose. See main.cjs.
+    checkLegacyModels: () => ipcRenderer.invoke('legacy-models-check'),
+    resolveLegacyModels: (action) => ipcRenderer.invoke('legacy-models-resolve', action),
+    openLegacyModelsFolder: () => ipcRenderer.invoke('legacy-models-open'),
     // Developer debug module: the runtime log and the memory monitor. See electron/debug/debugHost.cjs.
     debugGetState: () => ipcRenderer.invoke('debug-get-state'),
     debugSetState: (patch) => ipcRenderer.invoke('debug-set-state', patch),
     debugOpenLogs: (which) => ipcRenderer.invoke('debug-open-logs', which),
     // Batched by the caller - one message per line would cost more than the logging it records.
     debugWriteRuntimeLines: (lines) => ipcRenderer.send('debug-runtime-lines', lines),
+    // The main process's console lines, for the log panel: what was said so far, then each burst.
+    onDebugMainLines: (callback) => {
+        // After a reload the window is still listed from its last page, and a burst sent to it can
+        // arrive ahead of the backlog this page asks for, which holds the same lines.
+        let caughtUp = false;
+        const listener = (_event, lines, isBacklog) => {
+            caughtUp ||= isBacklog === true;
+            if (caughtUp) callback(lines);
+        };
+        ipcRenderer.on('debug-main-lines', listener);
+        ipcRenderer.send('debug-main-lines-ready');
+        return () => ipcRenderer.removeListener('debug-main-lines', listener);
+    },
     /**
      * What only this process can answer about itself.
      *
@@ -51,23 +76,6 @@ contextBridge.exposeInMainWorld('electron', {
         ipcRenderer.on('debug-memory-sample', listener);
         return () => ipcRenderer.removeListener('debug-memory-sample', listener);
     },
-    // Where the weights are kept. The settings page reads the live location off the model status;
-    // these two only change it.
-    chooseModelsDirectory: () => ipcRenderer.invoke('choose-models-directory'),
-    resetModelsDirectory: () => ipcRenderer.invoke('reset-models-directory'),
-    // Getting the weights onto this machine: over the network, off a file already here, or by
-    // pointing at one. All three end at the same verified file - see analysis/modelStore.cjs.
-    getAutomixModelStatus: () => ipcRenderer.invoke('automix-model-status'),
-    downloadAutomixModel: (name) => ipcRenderer.invoke('automix-model-download', name),
-    cancelAutomixModelDownload: (name) => ipcRenderer.invoke('automix-model-cancel', name),
-    scanForAutomixModels: () => ipcRenderer.invoke('automix-model-scan'),
-    installAutomixModel: (name, source) => ipcRenderer.invoke('automix-model-install', name, source),
-    removeAllAutomixModels: () => ipcRenderer.invoke('automix-model-remove-all'),
-    onAutomixModelProgress: (callback) => {
-        const listener = (_event, progress) => callback(progress);
-        ipcRenderer.on('automix-model-progress', listener);
-        return () => ipcRenderer.removeListener('automix-model-progress', listener);
-    },
     platform: process.platform,
     isLinuxX11: process.platform === 'linux' && !process.env.WAYLAND_DISPLAY,
     getSettings: () => ipcRenderer.invoke('get-settings'),
@@ -92,6 +100,13 @@ contextBridge.exposeInMainWorld('electron', {
         ipcRenderer.on('wallpaper-input-monitor-requested', listener);
         return () => ipcRenderer.removeListener('wallpaper-input-monitor-requested', listener);
     },
+    getWallpaperDisplays: () => ipcRenderer.invoke('wallpaper-displays-get'),
+    setWallpaperDisplay: (displayId) => ipcRenderer.invoke('wallpaper-display-set', displayId),
+    onWallpaperDisplaysChanged: (callback) => {
+        const listener = (_event, state) => callback(state);
+        ipcRenderer.on('wallpaper-displays-changed', listener);
+        return () => ipcRenderer.removeListener('wallpaper-displays-changed', listener);
+    },
     setPlaybackDisplaySleepBlockingActive: (active) => ipcRenderer.invoke('playback-display-sleep-set-active', active),
     setAppLocale: (localeKey) => ipcRenderer.invoke('set-app-locale', localeKey),
     getCacheDirectory: () => ipcRenderer.invoke('get-cache-directory'),
@@ -112,6 +127,7 @@ contextBridge.exposeInMainWorld('electron', {
     getAudioCache: (cacheKey) => ipcRenderer.invoke('get-audio-cache', cacheKey),
     hasAudioCache: (cacheKey) => ipcRenderer.invoke('has-audio-cache', cacheKey),
     saveAudioCache: (cacheKey, data, mimeType, limitBytes) => ipcRenderer.invoke('save-audio-cache', cacheKey, data, mimeType, limitBytes),
+    removeAudioCache: (cacheKey, size) => ipcRenderer.invoke('remove-audio-cache', cacheKey, size),
     getAudioCacheUsage: () => ipcRenderer.invoke('get-audio-cache-usage'),
     getAudioCacheStats: () => ipcRenderer.invoke('get-audio-cache-stats'),
     clearAudioCache: () => ipcRenderer.invoke('clear-audio-cache'),
@@ -134,7 +150,8 @@ contextBridge.exposeInMainWorld('electron', {
     getNeteaseApiStatus: () => ipcRenderer.invoke('get-netease-api-status'),
     getLoginDiagnostics: (providerId) => ipcRenderer.invoke('get-login-diagnostics', providerId),
     runLoginSelfCheck: (providerId) => ipcRenderer.invoke('run-login-self-check', providerId),
-    restartNeteaseApi: () => ipcRenderer.invoke('restart-netease-api'),
+    // 'needed': a request needs the local service and finds it down (see startsAgainWhenNeeded).
+    restartNeteaseApi: (reason) => ipcRenderer.invoke('restart-netease-api', reason),
     onNeteaseApiStatusChanged: (callback) => {
         const listener = (_event, status) => callback(status);
         ipcRenderer.on('netease-api-status-changed', listener);
@@ -143,51 +160,8 @@ contextBridge.exposeInMainWorld('electron', {
     getKugouApiStatus: () => ipcRenderer.invoke('kugou-api-status'),
     kugouRequest: (operation, params) => ipcRenderer.invoke('kugou-api-request', operation, params),
     bodianRequest: (operation, params) => ipcRenderer.invoke('bodian-api-request', operation, params),
-    // 自定义音源（洛雪格式）版块。桌面端专属：Web 端没有这个对象，渲染层据此隐藏版块。
-    lxSource: {
-      listApis: () => ipcRenderer.invoke('lx-source:list-apis'),
-      importScriptOnline: (url) => ipcRenderer.invoke('lx-source:import-online', url),
-      importScriptText: (text) => ipcRenderer.invoke('lx-source:import-text', text),
-      importScriptFile: () => ipcRenderer.invoke('lx-source:import-file'),
-      // 收藏列表导入 / 导出（洛雪 `.lxmc` 格式）。导出由渲染层序列化好文本再落盘。
-      exportPlaylist: (payload) => ipcRenderer.invoke('lx-source:export-playlist', payload),
-      importPlaylist: () => ipcRenderer.invoke('lx-source:import-playlist'),
-      removeApis: (ids) => ipcRenderer.invoke('lx-source:remove-apis', ids),
-      setActive: (apiId) => ipcRenderer.invoke('lx-source:set-active', apiId),
-      getStatus: () => ipcRenderer.invoke('lx-source:get-status'),
-      getMusicUrl: (payload) => ipcRenderer.invoke('lx-source:get-music-url', payload),
-      getLyric: (payload) => ipcRenderer.invoke('lx-source:get-lyric', payload),
-      getPic: (payload) => ipcRenderer.invoke('lx-source:get-pic', payload),
-      // Phase 2：榜单 / 歌单 / 搜索（主进程里移植的洛雪 musicSdk，仅 kw / mg）。
-      getBoards: (source) => ipcRenderer.invoke('lx-source:get-boards', source),
-      getBoardTracks: (payload) => ipcRenderer.invoke('lx-source:get-board-tracks', payload),
-      getPlaylistTracks: (payload) => ipcRenderer.invoke('lx-source:get-playlist-tracks', payload),
-      searchSongs: (payload) => ipcRenderer.invoke('lx-source:search-songs', payload),
-      searchPlaylists: (payload) => ipcRenderer.invoke('lx-source:search-playlists', payload),
-      searchSuggestions: (payload) => ipcRenderer.invoke('lx-source:search-suggestions', payload),
-      // Phase 3：下载（目录选择 / 入队 / 取消 / 列表 / 进度事件）。
-      chooseDownloadDir: () => ipcRenderer.invoke('lx-source:choose-download-dir'),
-      startDownload: (payload) => ipcRenderer.invoke('lx-source:start-download', payload),
-      cancelDownload: (taskId) => ipcRenderer.invoke('lx-source:cancel-download', taskId),
-      removeDownload: (taskId) => ipcRenderer.invoke('lx-source:remove-download', taskId),
-      listDownloads: () => ipcRenderer.invoke('lx-source:list-downloads'),
-      openDevTools: () => ipcRenderer.invoke('lx-source:open-devtools'),
-      onStatusChanged: (callback) => {
-        const listener = (_event, status) => callback(status);
-        ipcRenderer.on('lx-source:status-changed', listener);
-        return () => ipcRenderer.removeListener('lx-source:status-changed', listener);
-      },
-      onUpdateAlert: (callback) => {
-        const listener = (_event, alert) => callback(alert);
-        ipcRenderer.on('lx-source:update-alert', listener);
-        return () => ipcRenderer.removeListener('lx-source:update-alert', listener);
-      },
-      onDownloadProgress: (callback) => {
-        const listener = (_event, task) => callback(task);
-        ipcRenderer.on('lx-source:download-progress', listener);
-        return () => ipcRenderer.removeListener('lx-source:download-progress', listener);
-      },
-    },
+    ytmRequest: (operation, params) => ipcRenderer.invoke('ytm-api-request', operation, params),
+    spotifyRequest: (operation, params) => ipcRenderer.invoke('spotify-api-request', operation, params),
     getQqPort: () => ipcRenderer.invoke('get-qq-port'),
     getQqApiStatus: () => ipcRenderer.invoke('get-qq-api-status'),
     onQqApiStatusChanged: (callback) => {
@@ -199,7 +173,14 @@ contextBridge.exposeInMainWorld('electron', {
     toggleMaximizeWindow: () => ipcRenderer.invoke('window-toggle-maximize'),
     toggleFullscreenWindow: () => ipcRenderer.invoke('window-toggle-fullscreen'),
     closeWindow: () => ipcRenderer.invoke('window-close'),
+    // 关闭确认弹窗的「隐藏窗口」：主窗口收回托盘（托盘不在时主进程会退回关闭窗口）。
     hideWindow: () => ipcRenderer.invoke('window-hide'),
+    // 主进程收到标题栏 X，但界面用应用内弹窗而不是原生对话框，所以让渲染层把弹窗显示出来。
+    onWindowClosePrompt: (callback) => {
+        const listener = () => callback();
+        ipcRenderer.on('window-close:prompt', listener);
+        return () => ipcRenderer.removeListener('window-close:prompt', listener);
+    },
     quitApp: () => ipcRenderer.invoke('app-quit'),
     isWindowMaximized: () => ipcRenderer.invoke('window-is-maximized'),
     isWindowFullscreen: () => ipcRenderer.invoke('window-is-fullscreen'),
@@ -266,6 +247,13 @@ contextBridge.exposeInMainWorld('electron', {
         ipcRenderer.on('obs-browser-source-status-changed', listener);
         return () => ipcRenderer.removeListener('obs-browser-source-status-changed', listener);
     },
+    getGlobalShortcutBackend: () => ipcRenderer.invoke('global-shortcuts-backend'),
+    setGlobalShortcuts: (accelerators) => ipcRenderer.invoke('global-shortcuts-set', accelerators),
+    onGlobalShortcut: (callback) => {
+        const listener = (_event, accelerator) => callback(accelerator);
+        ipcRenderer.on('global-shortcut-triggered', listener);
+        return () => ipcRenderer.removeListener('global-shortcut-triggered', listener);
+    },
     updateTaskbarControls: (state) => ipcRenderer.invoke('thumbar-update-buttons', state),
     onTaskbarControl: (callback) => {
         const listener = (_event, action) => callback(action);
@@ -283,6 +271,12 @@ contextBridge.exposeInMainWorld('electron', {
         ipcRenderer.on('remote-control-window-settings-changed', listener);
         return () => ipcRenderer.removeListener('remote-control-window-settings-changed', listener);
     },
+    getRemoteControlPointerInside: () => ipcRenderer.invoke('remote-control-get-pointer-inside'),
+    onRemoteControlPointerInside: (callback) => {
+        const listener = (_event, inside) => callback(Boolean(inside));
+        ipcRenderer.on('remote-control-pointer-inside', listener);
+        return () => ipcRenderer.removeListener('remote-control-pointer-inside', listener);
+    },
     publishRemoteControlSnapshot: (snapshot) => ipcRenderer.invoke('remote-control-publish-snapshot', snapshot),
     getRemoteControlSnapshot: () => ipcRenderer.invoke('remote-control-get-snapshot'),
     sendRemoteControlCommand: (command) => ipcRenderer.invoke('remote-control-send-command', command),
@@ -298,10 +292,12 @@ contextBridge.exposeInMainWorld('electron', {
     },
     chooseVideoExportPath: (defaultName, extension, displayName) => ipcRenderer.invoke('video-export-choose-path', defaultName, extension, displayName),
     reportDevicePixelRatio: (ratio) => ipcRenderer.invoke('report-device-pixel-ratio', ratio),
-    getMainWindowCaptureSource: () => ipcRenderer.invoke('video-export-get-main-window-source'),
     prepareVideoExportWindow: (size) => ipcRenderer.invoke('video-export-prepare-window', size),
     restoreVideoExportWindow: () => ipcRenderer.invoke('video-export-restore-window'),
-    writeVideoExportFile: (filePath, data) => ipcRenderer.invoke('video-export-write-file', filePath, data),
+    openVideoExportFile: (filePath) => ipcRenderer.invoke('video-export-open-file', filePath),
+    appendVideoExportChunk: (sessionId, data) => ipcRenderer.invoke('video-export-append-chunk', sessionId, data),
+    finishVideoExportFile: (sessionId) => ipcRenderer.invoke('video-export-finish-file', sessionId),
+    abortVideoExportFile: (sessionId) => ipcRenderer.invoke('video-export-abort-file', sessionId),
     getStageStatus: () => ipcRenderer.invoke('stage-get-status'),
     setStageEnabled: (enabled) => ipcRenderer.invoke('stage-set-enabled', enabled),
     regenerateStageToken: () => ipcRenderer.invoke('stage-regenerate-token'),
@@ -351,6 +347,11 @@ contextBridge.exposeInMainWorld('electron', {
         getFfmpegStatus: () => ipcRenderer.invoke('folia-mods:ffmpeg-status'),
         openModsDirectory: () => ipcRenderer.invoke('folia-mods:open-directory'),
         installModFromZip: (zipPath) => ipcRenderer.invoke('folia-mods:install-zip', zipPath),
+        getModStorageUsage: (modId) => ipcRenderer.invoke('folia-mods:storage-usage', modId),
+        clearModCache: (modId) => ipcRenderer.invoke('folia-mods:clear-cache', modId),
+        getModCallStats: () => ipcRenderer.invoke('folia-mods:call-stats'),
+        reportModsStartSettled: () => ipcRenderer.invoke('folia-mods:start-settled'),
+        reportModsStartAlive: () => ipcRenderer.invoke('folia-mods:start-alive'),
         onModsStateChanged: (callback) => {
             const listener = (_event, mods) => callback(mods);
             ipcRenderer.on('folia-mods:state-changed', listener);
@@ -365,6 +366,39 @@ contextBridge.exposeInMainWorld('electron', {
             const listener = (_event, entry) => callback(entry);
             ipcRenderer.on('folia-mods:log', listener);
             return () => ipcRenderer.removeListener('folia-mods:log', listener);
+        },
+    },
+    // 洛雪自定义音源宿主（electron/luoxueSource/index.cjs）。全部走 invoke；浏览器构建里没有这个键，
+    // 渲染层据此降级为空能力 —— 见 src/luoxue/runtime/sourceRuntime.ts 的 getBridge()。
+    luoxueSource: {
+        list: () => ipcRenderer.invoke('luoxue-source:list'),
+        save: (payload) => ipcRenderer.invoke('luoxue-source:save', payload),
+        remove: (id) => ipcRenderer.invoke('luoxue-source:remove', id),
+        setActive: (id) => ipcRenderer.invoke('luoxue-source:setActive', id),
+        getActiveId: () => ipcRenderer.invoke('luoxue-source:getActiveId'),
+        init: () => ipcRenderer.invoke('luoxue-source:init'),
+        invoke: (params) => ipcRenderer.invoke('luoxue-source:invoke', params),
+        cancel: (requestKey) => ipcRenderer.invoke('luoxue-source:cancel', requestKey),
+        getInfo: () => ipcRenderer.invoke('luoxue-source:getInfo'),
+        // 主进程 HTTP 代理：SDK 的 request.ts 在 webSecurity:true 下靠它绕过 CORS。取消走独立通道，
+        // requestKey 用 'http__' 前缀与脚本 invoke 的 'request__' 区分开。
+        http: (params) => ipcRenderer.invoke('luoxue-source:http', params),
+        httpCancel: (requestKey) => ipcRenderer.invoke('luoxue-source:http-cancel', requestKey),
+        // 真实下载落盘（见 electron/luoxueSource/index.cjs 的 download / performDownload）：
+        // selectDirectory 弹目录选择框；download 流式写入文件并回报进度；downloadCancel 按 taskId 中断。
+        selectDirectory: () => ipcRenderer.invoke('luoxue-source:select-directory'),
+        // 在系统文件管理器里定位已下载的文件（返回是否定位成功）。
+        showItemInFolder: (filePath) => ipcRenderer.invoke('luoxue-source:show-item-in-folder', filePath),
+        download: (payload) => ipcRenderer.invoke('luoxue-source:download', payload),
+        downloadCancel: (taskId) => ipcRenderer.invoke('luoxue-source:download-cancel', taskId),
+        writeTextFile: (payload) => ipcRenderer.invoke('luoxue-source:write-text-file', payload),
+        // 把封面 / 歌词嵌入音频文件（只支持 .mp3 / .flac；封面在主进程取，见 electron/luoxueSource/tags.cjs）。
+        writeTags: (payload) => ipcRenderer.invoke('luoxue-source:write-tags', payload),
+        // 进度事件订阅：返回取消订阅函数（与 folia-mods:log 的写法一致）。
+        onDownloadProgress: (callback) => {
+            const listener = (_event, payload) => callback(payload);
+            ipcRenderer.on('luoxue-source:download-progress', listener);
+            return () => ipcRenderer.removeListener('luoxue-source:download-progress', listener);
         },
     },
 });

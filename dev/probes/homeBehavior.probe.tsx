@@ -9,6 +9,8 @@ import {
     type HomeProbeLibrary,
 } from './homeBehavior/useHomeProbeHarness';
 import { usePaletteTypingStandIn } from './paletteTypingStandIn';
+import { WallToolsHostContext } from '../../src/components/wall/wallToolsHost';
+import { PROBE_WALL_TOOLS_HOST } from './homeBehavior/probeWallToolsHost';
 // dev/probes/homeBehavior.probe.tsx
 
 /**
@@ -21,10 +23,15 @@ import { usePaletteTypingStandIn } from './paletteTypingStandIn';
  * 因为它要往 IndexedDB 写种子。
  *
  * 宿主区域套了一层 transform：GridMap、GridView 都是 `fixed inset-0`，transform 让它们以这块区域为包含块。
+ * 墙面工具的宿主（真 App 在 WallToolsDockHost 上提供）这里用只记账的假宿主（probeWallToolsHost）包在 Home 外面。
  */
 const HomeProbeStage: React.FC<{ library: HomeProbeLibrary }> = ({ library }) => {
     const { model, mountKey } = useHomeProbeModel(library);
-    return <Home key={mountKey} model={model} />;
+    return (
+        <WallToolsHostContext.Provider value={PROBE_WALL_TOOLS_HOST}>
+            <Home key={mountKey} model={model} />
+        </WallToolsHostContext.Provider>
+    );
 };
 
 const HomeBehaviorProbe: React.FC = () => {

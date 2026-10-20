@@ -1,4 +1,5 @@
 import type { ModRuntimeInfo } from '../types';
+import { homeTabsRegistry, selectFoliumHomeTab } from './registries/homeTabs';
 import { invokeModNetFetch, invokeModPickFile, invokeModReleaseFile, invokeModRestoreFile } from '../ipc';
 import type {
     FoliumContextKind,
@@ -7,15 +8,23 @@ import type {
     FoliumFetchResponse,
     FoliumFileHandle,
     FoliumIconOptions,
+    FoliumLine,
+    FoliumLoopMode,
+    FoliumLyricsService,
     FoliumNetService,
     FoliumPlaybackService,
+    FoliumQueueSnapshot,
     FoliumSong,
     FoliumUiService,
 } from './contract';
+import type { FoliumPermissionId } from './shared';
+import { FOLIUM_LYRICS_HELPERS } from './sharedHelpers';
 
 // src/mods/folium/services.ts
-// `folium.playback`, `folium.ui` and `folium.net`. This module deliberately
-// imports no app stores: the export window loads it too. The main window's App
+// `folium.playback`, `folium.ui`, `folium.net` and `folium.lyrics`. This module deliberately
+// imports no app stores (nothing under src/stores): the export window loads it
+// too. The one store it does bring in is mods-owned — the home-page selection in
+// registries/homeTabs (pinned by foliumServicesBoundary.test.ts). The main window's App
 // registers the real actions (registerFoliumHostActions, see hostActions.ts);
 // until it has — and always in the export window — calls fail with a clear
 // "unavailable" error instead of touching state that does not exist there.
@@ -37,10 +46,24 @@ export interface FoliumHostActions {
     shuffleQueue: () => boolean;
     /** False when the displayed song cannot be liked right now. */
     toggleLike: () => boolean;
+    getVolume: () => { volume: number; muted: boolean };
+    /** Already clamped to 0–1 by the service. */
+    setVolume: (volume: number) => void;
+    setMuted: (muted: boolean) => void;
+    getLoopMode: () => FoliumLoopMode;
+    setLoopMode: (mode: FoliumLoopMode) => void;
+    /** `offset` is a whole number or undefined (centre on the displayed song); `limit` is 1–500. */
+    getQueue: (offset: number | undefined, limit: number) => FoliumQueueSnapshot;
+    /** False when the entry cannot be played: out of range, Stage playback, or no longer `expectedRef`. */
+    playQueueItem: (index: number, expectedRef: string | undefined) => Promise<boolean>;
     toast: (message: string, type: 'info' | 'success' | 'error', durationMs?: number) => void;
     openPlayerPanel: (tab: string | null) => void;
     navigate: (view: 'home' | 'player') => void;
     openVolume: () => void;
+    /** The lines on screen now, as DTOs; empty when there are none. */
+    getLyricLines: () => readonly FoliumLine[];
+    /** Runs `lyrics.transform` again on the displayed song's untransformed lyrics; nothing while they load. */
+    refreshLyrics: () => void;
 }
 
 let hostActions: FoliumHostActions | null = null;
@@ -49,17 +72,24 @@ export const registerFoliumHostActions = (actions: FoliumHostActions | null) => 
     hostActions = actions;
 };
 
-const PLAYBACK_CONTROL = 'playback.control';
-const NET_EMBED = 'net.embed';
+const PLAYBACK_CONTROL: FoliumPermissionId = 'playback.control';
+const NET_EMBED: FoliumPermissionId = 'net.embed';
 
+const unavailable = (what: string, context: FoliumContextKind) => new Error(`${what}-unavailable-in-${context}-context`);
+
+/** Throws `<what>-unavailable-in-<context>-context` outside the main window. */
+const requireMain = (what: string, context: FoliumContextKind) => {
+    if (context !== 'main') throw unavailable(what, context);
+};
+
+/** The App's actions; unavailable outside the main window and until the App registered them. */
 const requireActions = (what: string, context: FoliumContextKind): FoliumHostActions => {
-    if (context !== 'main' || !hostActions) {
-        throw new Error(`${what}-unavailable-in-${context}-context`);
-    }
+    requireMain(what, context);
+    if (!hostActions) throw unavailable(what, context);
     return hostActions;
 };
 
-const requirePermission = (mod: ModRuntimeInfo, permission: string) => {
+const requirePermission = (mod: ModRuntimeInfo, permission: FoliumPermissionId) => {
     if (!mod.permissions.includes(permission)) {
         throw new Error(`permission-denied:${permission}`);
     }
@@ -70,6 +100,30 @@ const requireRef = (song: FoliumSong): string => {
         throw new Error('song-ref-required: pass a song DTO that came from the host');
     }
     return song.ref;
+};
+
+const LOOP_MODES: readonly FoliumLoopMode[] = ['off', 'all', 'one'];
+// The most queue entries one getQueue call returns, and its default page size.
+const MAX_QUEUE_PAGE = 500;
+
+/*
+ * getQueue's options, checked: a value that is given must be a finite number
+ * (anything else throws rather than silently reading another page). Both are
+ * floored; the limit is clamped to 1–500 here, the offset to the queue length
+ * by the host, which is the side that knows the length.
+ */
+const resolveQueuePage = (options: { offset?: number; limit?: number } | undefined) => {
+    const { offset, limit } = options ?? {};
+    if (offset !== undefined && !Number.isFinite(offset)) {
+        throw new Error('playback.getQueue: offset must be a finite number');
+    }
+    if (limit !== undefined && !Number.isFinite(limit)) {
+        throw new Error('playback.getQueue: limit must be a finite number');
+    }
+    return {
+        offset: offset === undefined ? undefined : Math.floor(offset),
+        limit: limit === undefined ? MAX_QUEUE_PAGE : Math.min(MAX_QUEUE_PAGE, Math.max(1, Math.floor(limit))),
+    };
 };
 
 export const createFoliumPlaybackService = (mod: ModRuntimeInfo, context: FoliumContextKind): FoliumPlaybackService => {
@@ -96,6 +150,28 @@ export const createFoliumPlaybackService = (mod: ModRuntimeInfo, context: Folium
         enqueue: (song: FoliumSong) => control().enqueueSongRef(requireRef(song)),
         shuffleQueue: () => control().shuffleQueue(),
         toggleLike: () => control().toggleLike(),
+        getVolume: () => requireActions('playback', context).getVolume(),
+        setVolume: (volume: number) => {
+            if (!Number.isFinite(volume)) throw new Error('playback.setVolume requires a finite number');
+            control().setVolume(Math.min(1, Math.max(0, volume)));
+        },
+        setMuted: (muted: boolean) => {
+            if (typeof muted !== 'boolean') throw new Error('playback.setMuted requires a boolean');
+            control().setMuted(muted);
+        },
+        getLoopMode: () => requireActions('playback', context).getLoopMode(),
+        setLoopMode: (mode: FoliumLoopMode) => {
+            if (!LOOP_MODES.includes(mode)) throw new Error(`playback.setLoopMode: unknown mode "${String(mode)}"`);
+            control().setLoopMode(mode);
+        },
+        getQueue: (options?: { offset?: number; limit?: number }) => {
+            const page = resolveQueuePage(options);
+            return requireActions('playback', context).getQueue(page.offset, page.limit);
+        },
+        playQueueItem: async (index: number, expectedRef?: string) => {
+            if (!Number.isInteger(index)) throw new Error('playback.playQueueItem requires an integer index');
+            return control().playQueueItem(index, expectedRef);
+        },
     });
 };
 
@@ -144,36 +220,50 @@ export const createFoliumUiService = (mod: ModRuntimeInfo, context: FoliumContex
     openPlayerPanel: (tabId?: string) => {
         requireActions('ui', context).openPlayerPanel(tabId ? `folium:${mod.id}:${tabId}` : null);
     },
+    openHomeTab: (tabId: string) => {
+        const actions = requireActions('ui', context);
+        const id = `${mod.id}:${tabId}` as const;
+        if (!homeTabsRegistry.get(id)) throw new Error(`home-tab-not-registered:${tabId}`);
+        actions.navigate('home');
+        selectFoliumHomeTab(id);
+    },
     navigate: (view: 'home' | 'player') => {
         if (view !== 'home' && view !== 'player') throw new Error(`ui.navigate: unknown view "${String(view)}"`);
         requireActions('ui', context).navigate(view);
     },
     openVolume: () => requireActions('ui', context).openVolume(),
     pickFile: async (options: { accept?: 'video' | 'audio' | 'image' | 'any'; persist?: boolean } = {}) => {
-        if (context !== 'main') throw new Error(`ui-unavailable-in-${context}-context`);
+        requireMain('ui', context);
         const response = await invokeModPickFile(mod.id, options.accept ?? 'any', options.persist === true);
         if (!response.ok) throw new Error(response.error ?? 'pick-file-failed');
         return (response.result as FoliumFileHandle | null) ?? null;
     },
     restoreFile: async (grantId: string) => {
-        if (context !== 'main') throw new Error(`ui-unavailable-in-${context}-context`);
+        requireMain('ui', context);
         if (typeof grantId !== 'string' || !grantId) return null;
         const response = await invokeModRestoreFile(mod.id, grantId);
         if (!response.ok) throw new Error(response.error ?? 'restore-file-failed');
         return (response.result as FoliumFileHandle | null) ?? null;
     },
     releaseFile: async (grantId: string) => {
-        if (context !== 'main') throw new Error(`ui-unavailable-in-${context}-context`);
+        requireMain('ui', context);
         if (typeof grantId !== 'string' || !grantId) return;
         const response = await invokeModReleaseFile(mod.id, grantId);
         if (!response.ok) throw new Error(response.error ?? 'release-file-failed');
     },
     embed: (container: HTMLElement, url: string, options?: { title?: string; allow?: string[] }) => {
-        if (context !== 'main') throw new Error(`ui-unavailable-in-${context}-context`);
+        requireMain('ui', context);
         return createEmbed(mod, container, url, options);
     },
     // Loaded on first use: the icon table alone lists every lucide icon.
     icon: async (name: string, options?: FoliumIconOptions) => (await import('./icons')).createFoliumIcon(name, options),
+});
+
+/** `folium.lyrics`: the shared helpers, plus the displayed song's lyrics from the App. */
+export const createFoliumLyricsService = (context: FoliumContextKind): FoliumLyricsService => Object.freeze({
+    ...FOLIUM_LYRICS_HELPERS,
+    getLines: () => requireActions('lyrics', context).getLyricLines(),
+    refresh: () => requireActions('lyrics', context).refreshLyrics(),
 });
 
 const buildResponse = (raw: { status: number; statusText: string; headers: Record<string, string>; body: string }): FoliumFetchResponse => {
@@ -190,7 +280,7 @@ const buildResponse = (raw: { status: number; statusText: string; headers: Recor
 
 export const createFoliumNetService = (mod: ModRuntimeInfo, context: FoliumContextKind): FoliumNetService => Object.freeze({
     fetch: async (url: string, init: FoliumFetchInit = {}) => {
-        if (context !== 'main') throw new Error(`net-unavailable-in-${context}-context`);
+        requireMain('net', context);
         const response = await invokeModNetFetch(mod.id, String(url), init);
         if (!response.ok) throw new Error(response.error ?? 'net-fetch-failed');
         return buildResponse(response.result as { status: number; statusText: string; headers: Record<string, string>; body: string });

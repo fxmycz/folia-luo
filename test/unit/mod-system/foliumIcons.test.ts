@@ -3,10 +3,12 @@ import { describe, expect, it } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { SkipForward } from 'lucide-react';
+import fs from 'node:fs';
+import path from 'node:path';
 import { buildIconElement, createFoliumIcon, hasFoliumIcon } from '@/mods/folium/icons';
 
 // test/unit/mod-system/foliumIcons.test.ts
-// folium.ui.icon (Folium 1.2): lucide icons for mods as plain, mod-owned SVG elements.
+// folium.ui.icon: lucide icons for mods as plain, mod-owned SVG elements.
 
 const shapesOf = (svg: Element) => Array.from(svg.children).map(child => [
     child.tagName.toLowerCase(),
@@ -14,6 +16,13 @@ const shapesOf = (svg: Element) => Array.from(svg.children).map(child => [
 ]);
 
 describe('folium.ui.icon', () => {
+    it('names the lucide version Folia bundles in its contract text, so authors look up the right icon list', () => {
+        const contract = fs.readFileSync(path.join(process.cwd(), 'src/mods/folium/contract.ts'), 'utf8');
+        const bundled = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'node_modules/lucide-react/package.json'), 'utf8')).version as string;
+        const [major, minor] = bundled.split('.');
+        expect(contract).toContain(`lucide-react ${major}.${minor}, the version Folia bundles`);
+    });
+
     it('draws the same shapes as the host lucide component', async () => {
         const icon = await createFoliumIcon('skip-forward');
         expect(icon).not.toBeNull();
@@ -31,6 +40,16 @@ describe('folium.ui.icon', () => {
         expect(icon!.getAttribute('stroke-width')).toBe('1.5');
         expect(icon!.getAttribute('stroke')).toBe('#ff0000');
         expect(icon!.getAttribute('viewBox')).toBe('0 0 24 24');
+    });
+
+    it('draws an alias name as its canonical icon', async () => {
+        // lucide's alias files (icons/alarm-check.mjs) only re-export `default`, with no __iconData.
+        // dynamicIconImports routes alias keys to the canonical module instead; this pins that.
+        const alias = await createFoliumIcon('alarm-check');
+        const canonical = await createFoliumIcon('alarm-clock-check');
+        expect(alias).not.toBeNull();
+        expect(shapesOf(alias!)).toEqual(shapesOf(canonical!));
+        expect(alias!.getAttribute('class')).toBe('lucide lucide-alarm-check');
     });
 
     it('returns null for unknown or malformed names', async () => {

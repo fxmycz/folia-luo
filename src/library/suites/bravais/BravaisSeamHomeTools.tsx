@@ -31,7 +31,7 @@ import { bravaisPopMotion } from './bravaisSeamMotion';
 // 用户实测（菜单透明、与账户入口叠字）：根因不是弹出动画——framer 的 motion.div 保留了 is-home 的不透明底——而是 fb4 给
 // 账户位加了 position: relative + z-index: 3，工具格（dock）没有层级，菜单的 z-index: 2 只在窄缝这一层里比，于是被账户
 // 入口盖在上面。修法：dock 的层级抬到账户位之上（bravaisHome.css）；菜单两侧比工具格各宽一些、项不折行。
-// 菜单与账户的平台列表互斥：开着哪个记在 bravaisHomeUiStore 的 popover，开一个就收另一个。
+// 菜单开没开记在 bravaisHomeUiStore 的 popover。
 // 直达入口（特殊集合）在窄缝中段放不下时挪进菜单（menuShortcuts）：排在最前，图标 + 全名，与后面的项隔一道分隔线。
 // fb11（用户要求）：舞台模式开着时（宿主给了 onOpenStagePlayer 且 stageEnabled，即有 stage 这个工具）舞台入口不再在「⋯」
 // 的 app 组里，而是单独占工具格最上面一整行（窄缝里是图标 + 短名「舞台」的一条，宽同两格；书脊上是一列最上面的一个图标），
@@ -39,6 +39,8 @@ import { bravaisPopMotion } from './bravaisSeamMotion';
 // 3 + 2：窄缝只有约 100px 宽，三格 40px 放不下；五格两列会剩一个空洞、「⋯」的位置也会变。舞台与 grid 首页那一排的
 // 「舞台」一样是「去哪儿」，所以带字。正在用舞台播放（stageIsActive）时与 grid 一样只标 data-stage-active，不画选中态
 // （它不是开关，点它总是打开舞台）。
+// 工具带 badge（设置：发现新版本）时说明拼进 aria-label / title；窄缝里工具格下方另起一行可点的说明文字（点它与点那一格相同），
+// 书脊上放不下文字，改在图标右上角画一个强调色的点。
 
 const TOOL_ICONS: Record<BravaisHomeToolId, React.ComponentType<{ 'aria-hidden'?: boolean; className?: string }>> = {
     search: Search,
@@ -46,6 +48,7 @@ const TOOL_ICONS: Record<BravaisHomeToolId, React.ComponentType<{ 'aria-hidden'?
     directory: FolderTree,
     'manage-hidden': EyeOff,
     'refresh-navidrome': RefreshCw,
+    'refresh-explore': RefreshCw,
     // 进 Lattice（播放队列）：与 grid 首页 Grid3D 的 Lattice 入口同一个图标（home-lattice-pill）。
     queue: PanelsTopLeft,
     player: Disc3,
@@ -78,6 +81,7 @@ const BravaisSeamHomeTools: React.FC<{
     const moreRef = useRef<HTMLButtonElement>(null);
     const request = useBravaisHomeUiStore(state => state.openRequest);
     const { dock, page, app } = splitHomeTools(home.tools);
+    const notice = dock.find(tool => tool.badge);
     const local = home.menu ?? [];
     const jumps = menuShortcuts ?? [];
     const hasMenu = jumps.length > 0 || page.length > 0 || local.length > 0 || app.length > 0;
@@ -177,6 +181,7 @@ const BravaisSeamHomeTools: React.FC<{
                 {dock.map((tool) => {
                     const Icon = TOOL_ICONS[tool.id];
                     const wide = tool.id === 'stage';
+                    const label = tool.badge ? `${tool.label} · ${tool.badge}` : tool.label;
                     return (
                         <button
                             key={tool.id}
@@ -184,14 +189,16 @@ const BravaisSeamHomeTools: React.FC<{
                             className={`bravais-seam-icon${tool.pressed ? ' is-pressed' : ''}${wide ? ' is-wide' : ''}`}
                             data-bravais-seam-action={tool.id}
                             data-stage-active={wide ? String(Boolean(tool.active)) : undefined}
-                            aria-label={tool.label}
+                            data-bravais-badge={tool.badge ? 'true' : undefined}
+                            aria-label={label}
                             aria-pressed={tool.pressed}
-                            title={tool.label}
+                            title={label}
                             disabled={tool.disabled}
                             onClick={tool.run}
                         >
                             <Icon aria-hidden className={tool.busy ? 'animate-spin' : undefined} />
                             {wide && !compact && tool.shortLabel && <span className="is-label" aria-hidden>{tool.shortLabel}</span>}
+                            {tool.badge && compact && <span className="is-badge" aria-hidden />}
                         </button>
                     );
                 })}
@@ -203,6 +210,13 @@ const BravaisSeamHomeTools: React.FC<{
                     </button>
                 )}
             </div>
+            {notice && !compact && (
+                <button type="button" className="bravais-seam-notice" data-bravais-seam-action={`${notice.id}-notice`}
+                    title={notice.badge} onClick={notice.run}>
+                    <span className="is-dot" aria-hidden />
+                    <span className="is-text">{notice.badge}</span>
+                </button>
+            )}
         </div>
     );
 };

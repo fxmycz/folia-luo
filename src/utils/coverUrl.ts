@@ -7,6 +7,7 @@ const KUWO_COVER_HOST_PATTERN = /^img\d*\.kuwo\.cn$/i;
 const KUWO_COVER_PATH_PATTERN = /^(\/star\/(?:albumcover|starheads)\/)(\d+)(\/)/;
 const KUWO_COVER_SMALL_SIZE = 240;
 const KUWO_COVER_LARGE_SIZE = 800;
+const NETEASE_COVER_HOST_PATTERN = /^p\d+\.music\.126\.net$/i;
 const QQ_COVER_HOSTNAMES = new Set(['y.gtimg.cn', 'y.qq.com']);
 const QQ_COVER_PATH_PATTERN = /(T00[12])(?:R(\d+)x\d+)?(M000)/;
 const QQ_COVER_SMALL_SIZE = 300;
@@ -72,6 +73,30 @@ export const getOriginalCoverUrl = (url: string | null | undefined): string => {
     } catch {
         return trimmedUrl;
     }
+};
+
+/**
+ * Names the artwork a cover URL points at, ignoring what only changes how it is fetched: the query
+ * string and fragment, the protocol, Netease's interchangeable pN hosts, and the size QQ, KuGou and
+ * Kuwo write into the path. Two URLs with the same key show the same picture, so callers can
+ * compare covers (one album cover shared by every track, a cover flying back to its tile) without
+ * being fooled by the CDN handing the same file out under different names.
+ */
+export const getCoverIdentity = (url: string | null | undefined): string => {
+    const trimmedUrl = url?.trim() ?? '';
+    if (!trimmedUrl) return '';
+
+    try {
+        const urlObj = new URL(trimmedUrl);
+        if (NON_RESIZABLE_COVER_PROTOCOLS.has(urlObj.protocol)) return trimmedUrl;
+        if (NETEASE_COVER_HOST_PATTERN.test(urlObj.hostname)) return `netease:${urlObj.pathname}`;
+        if (isKugouCoverUrl(urlObj)) return `kugou:${urlObj.pathname.replace(KUGOU_COVER_PATH_PATTERN, '$1*$3')}`;
+        if (isKuwoCoverUrl(urlObj)) return `kuwo:${urlObj.pathname.replace(KUWO_COVER_PATH_PATTERN, '$1*$3')}`;
+        if (isQqCoverUrl(urlObj)) return `qq:${urlObj.pathname.replace(QQ_COVER_PATH_PATTERN, '$1$3')}`;
+    } catch {
+        // Relative paths (/__folia_cover/…) fall through to the plain rule.
+    }
+    return trimmedUrl.split(/[?#]/)[0];
 };
 
 /**

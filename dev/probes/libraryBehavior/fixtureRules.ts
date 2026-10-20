@@ -295,9 +295,17 @@ export type OnlineArtistRule = {
     albumCount: number;
 };
 
-const probeArtistCover = (fill: string): string => (
-    `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="${fill}"/></svg>`)}`
-);
+/**
+ * 手动点检用的参数（用例不带，照旧）：?realCovers=<目录地址> 时歌手照片也换成那个目录里的一张真图（与 fakeProviders 的
+ * 专辑封面同一个目录）；?artistName=… 给主歌手换个名字（看长名字在海报上放不放得下）。
+ */
+const PROBE_MANUAL = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+
+const probeArtistCover = (fill: string, realIndex: number): string => {
+    const real = PROBE_MANUAL?.get('realCovers');
+    if (real) return `${real.endsWith('/') ? real : `${real}/`}a${String(realIndex).padStart(2, '0')}.jpg`;
+    return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="${fill}"/></svg>`)}`;
+};
 
 /** omni 拉歌手专辑的页大小（ArtistGridView 写死 50）。 */
 export const ARTIST_ALBUM_PAGE_SIZE = 50;
@@ -309,9 +317,9 @@ export const ONLINE_ARTISTS: Readonly<Record<OnlineArtistFixtureId, OnlineArtist
     'artist-main': {
         providerId: PROBE_PROVIDER_A,
         artistId: 'ar-1',
-        name: 'Probe Artist',
+        name: PROBE_MANUAL?.get('artistName') || 'Probe Artist',
         description: 'Probe Artist biography.',
-        coverUrl: probeArtistCover('#7c3aed'),
+        coverUrl: probeArtistCover('#7c3aed', 1),
         topSongPrefix: 'artop',
         topSongIndexes: range(10, 20),
         albumPrefix: 'ar1-al',
@@ -323,7 +331,7 @@ export const ONLINE_ARTISTS: Readonly<Record<OnlineArtistFixtureId, OnlineArtist
         artistId: 'ar-2',
         name: 'Guest Singer',
         description: 'Guest Singer biography.',
-        coverUrl: probeArtistCover('#0891b2'),
+        coverUrl: probeArtistCover('#0891b2', 5),
         topSongPrefix: 'gtop',
         topSongIndexes: range(3),
         albumPrefix: 'ar2-al',

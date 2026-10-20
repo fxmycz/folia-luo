@@ -9,8 +9,8 @@
       "id": "qq-device-limit",
       "providers": ["qq"],
       "title": "QQ 音乐账号的登录设备数已达上限",
-      "symptoms": "扫码并在手机上确认后，凭据交换（phase=credential-exchange）阶段上游返回 upstreamCode=20279，随后 get-login-user 返回 code=1000，界面报 credential-validation / upstream-rejected。",
-      "match": ["upstreamCode[\"=:]+20279\\b"],
+      "symptoms": "扫码并在手机上确认后，凭据交换（phase=credential-exchange）阶段上游返回 upstreamCode=20279，随后 get-login-user 返回 code=1000，界面报 credential-validation / upstream-rejected。qq-music-api 3.3.0 起响应另带 upstreamErrorKey=auth.device-limit，手机 QQ 扫码和 QQ 音乐 App 扫码的 20279 都在 primaryFailure 里。",
+      "match": ["upstreamCode[\"=:]+20279\\b", "auth\\.device-limit\\b"],
       "steps": [
         "打开 QQ 音乐官方客户端，进入「设置 → 设备管理」（在设置页最下面），移除不再使用的登录设备。",
         "QQ 音乐对同时登录的设备数有限制：免费用户 1 台，绿钻 3 台，超级会员 5 台。",
@@ -27,6 +27,22 @@
         "这是自行部署的网页版缺少后端配置。网页版需要自己部署对应平台的 API 服务（网易云为 NeteaseCloudMusicApi，酷狗为 KuGouMusicApi，QQ 音乐见 `docs/qq-music-deployment.md`）。",
         "在部署平台的环境变量里填写 `VITE_NETEASE_API_BASE`（酷狗为 `VITE_KUGOU_API_BASE`，QQ 音乐为 `VITE_QQ_API_BASE`），指向你部署好的 API 地址，说明见 `docs/technical.md`。",
         "这些变量在构建时写入前端，修改后必须重新构建并部署。",
+        "如果只是想直接使用，推荐下载 Electron 桌面版：桌面版内置了这些服务，不需要额外部署。"
+      ]
+    },
+    {
+      "id": "web-api-loopback",
+      "providers": [],
+      "title": "网页版的 API 地址指向本机（localhost）",
+      "symptoms": "网页版（user agent 不含 Electron）配置的 API 地址是 localhost / 127.0.0.1，通常是照抄了 .env.example 的 http://localhost:3000 再部署或打包进 App。手机上、或者访问别人部署的网站时，本机都没有 API 服务，请求要么连不上，要么打到本机别的服务上（常见 code 404）。新版报告里自检会报 ELOOPBACK。",
+      "match": [
+        "\\bELOOPBACK\\b",
+        ["^user agent: (?![^\\n]*Electron/)[^\\n]*(?:Android|iPhone|iPad)", "(?:remote API|backend: remote) (?:https?://(?:localhost|127\\.[\\d.]+|\\[::1\\])\\b|https? local\\b)"],
+        ["^user agent: (?![^\\n]*Electron/)", "(?:remote API|backend: remote) (?:https?://(?:localhost|127\\.[\\d.]+|\\[::1\\])\\b|https? local\\b)", "^generated: (?![\\s\\S]*^origin: https?://(?:localhost|127\\.|\\[::1\\]))"]
+      ],
+      "steps": [
+        "`VITE_NETEASE_API_BASE`（酷狗为 `VITE_KUGOU_API_BASE`，QQ 音乐为 `VITE_QQ_API_BASE`）要填成用户的设备能访问到的 API 地址，例如你部署好的 `https://api.example.com`，不能是 `localhost` 或 `127.0.0.1`：那指的是用户自己的手机或电脑。",
+        "这些变量在构建时写入前端，修改后必须重新构建并部署；打包进 App 的要重新打包。",
         "如果只是想直接使用，推荐下载 Electron 桌面版：桌面版内置了这些服务，不需要额外部署。"
       ]
     },

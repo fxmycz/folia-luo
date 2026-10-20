@@ -1,6 +1,6 @@
 {
   "name": "folia-major",
-  "productName": "Folia",
+  "productName": "Folia•洛",
   "desktopName": "folia-major.desktop",
   "description": "Lyrics Reimagine",
   "author": {
@@ -8,7 +8,7 @@
     "email": "chthollyphile@users.noreply.github.com"
   },
   "private": true,
-  "version": "0.7.17",
+  "version": "0.7.21",
   "license": "AGPL-3.0",
   "type": "module",
   "main": "electron/main.cjs",
@@ -24,6 +24,9 @@
     "typecheck": "tsc --noEmit",
     "codemap": "node dev/mcp/ts-code-map/codemap.mjs",
     "folium:api": "node dev/folium/api-docs.mjs",
+    "folium:types": "node dev/folium/types.mjs",
+    "folium:new": "node dev/folium/new.mjs",
+    "folium:check": "node dev/folium/check.mjs",
     "codemap:check": "node dev/mcp/ts-code-map/codemap.mjs --check",
     "test": "vitest run -c vitest.config.ts",
     "test:unit": "vitest run -c vitest.config.ts",
@@ -51,7 +54,6 @@
     "dev:electron:dist:software": "cross-env ELECTRON_DEV=false ELECTRON=true ELECTRON_LINUX_PACKAGED_GRAPHICS=true FOLIA_LINUX_GRAPHICS_MODE=software FOLIA_WINDOWTOLAYER_PATH=build/windowtolayer vite build && electron .",
     "build:electron:dir": "cross-env ELECTRON_DEV=false ELECTRON=true vite build && npm run build:windowtolayer && npm run build:wallpaper-helper && electron-builder --linux dir",
     "build:electron": "cross-env ELECTRON_DEV=false ELECTRON=true vite build && npm run build:windowtolayer && npm run build:wallpaper-helper && electron-builder",
-    "build:electron:green": "cross-env ELECTRON_DEV=false ELECTRON=true FOLIA_GREEN=true ELECTRON_MIRROR=https://registry.npmmirror.com/-/binary/electron/ ELECTRON_BUILDER_BINARIES_MIRROR=https://registry.npmmirror.com/-/binary/electron-builder-binaries/ vite build && electron-builder --win zip --publish never",
     "build:windowtolayer": "node packaging/linux/build-windowtolayer.mjs",
     "build:wallpaper-helper": "node packaging/windows/build-wallpaper-helper.mjs",
     "build:ffmpeg": "node packaging/ffmpeg/fetch-ffmpeg.mjs",
@@ -62,7 +64,7 @@
   },
   "build": {
     "appId": "top.izuna.foliamajor",
-    "productName": "妃莉娅",
+    "productName": "Folia•洛",
     "beforePack": "build/beforePack.cjs",
     "afterPack": "build/afterPack.cjs",
     "electronLanguages": [
@@ -85,18 +87,34 @@
       "dist/**/*",
       "electron/**/*",
       "shared/**/*",
+      "!**/node_modules/youtubei.js/bundle/**",
       "package.json",
       "build/miao.png",
       "build/thumbar/*.png"
     ],
     "asarUnpack": [
-      "electron/analysis/htdemucs_runner.py",
-      "node_modules/@koromix/koffi-*/**/*.node"
+      "node_modules/@koromix/koffi-*/**/*.node",
+      "node_modules/@lox-audioserver/node-librespot/prebuilds/**/*.node"
     ],
     "extraResources": [
       {
         "from": "build/ffmpeg/${os}-${arch}",
         "to": "ffmpeg-audio"
+      },
+      {
+        "from": "build/mnn/${os}-${arch}",
+        "to": "mnn",
+        "filter": [
+          "*folia_mnn.*"
+        ]
+      },
+      {
+        "from": "models",
+        "to": "models",
+        "filter": [
+          "beat_this-wgsl.bin",
+          "htdemucs-wgsl.bin"
+        ]
       },
       {
         "from": "build/icon.png",
@@ -158,7 +176,7 @@
       "artifactName": "${productName}-${version}-${arch}.${ext}"
     },
     "win": {
-      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "artifactName": "${productName}-Setup-${version}.${ext}",
       "target": [
         "nsis"
       ],
@@ -175,7 +193,6 @@
     },
     "nsis": {
       "oneClick": false,
-      "artifactName": "${productName}-Setup-${version}.${ext}",
       "allowToChangeInstallationDirectory": true,
       "installerLanguages": [
         "en_US",
@@ -208,21 +225,23 @@
   },
   "dependencies": {
     "@google/genai": "^2.24.0",
-    "@neteasecloudmusicapienhanced/api": "^4.41.1",
+    "@neteasecloudmusicapienhanced/api": "4.41.1",
     "@xhayper/discord-rpc": "^1.5.1",
-    "@yakult-green-tea/qq-music-api": "3.1.4",
+    "@yakult-green-tea/qq-music-api": "3.3.3",
     "axios": "^1.20.0",
+    "bgutils-js": "4.0.3",
     "bodian-music-api": "0.1.2",
     "busboy": "^1.6.0",
     "electron-store": "^11.0.2",
     "electron-updater": "^6.8.9",
     "fflate": "^0.8.3",
     "file-type": "^21.3.4",
+    "googlevideo": "4.1.1",
     "koffi": "^3.3.1",
     "kugoumusicapi": "https://github.com/MakcRe/KuGouMusicApi/archive/refs/tags/v1.6.0.tar.gz",
     "music-metadata": "^11.16.1",
-    "onnxruntime-node": "^1.30.0",
-    "ws": "^8.21.3"
+    "ws": "^8.21.3",
+    "youtubei.js": "18.1.0"
   },
   "devDependencies": {
     "@applemusic-like-lyrics/ttml": "^1.0.1",
@@ -242,11 +261,13 @@
     "@types/three": "^0.185.4",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.1.1",
+    "@webgpu/types": "0.1.74",
     "@xmldom/xmldom": "^0.9.12",
     "animejs": "^4.5.0",
     "autoprefixer": "^10.6.1",
     "baseline-browser-mapping": "^2.11.26",
     "blueimp-md5": "^2.19.0",
+    "budoux": "^0.9.3",
     "buffer": "^6.0.3",
     "concurrently": "^10.0.5",
     "cross-env": "^10.1.0",
@@ -290,5 +311,8 @@
     "three-stdlib": {
       "fflate": "$fflate"
     }
+  },
+  "optionalDependencies": {
+    "@lox-audioserver/node-librespot": "0.5.1"
   }
 }

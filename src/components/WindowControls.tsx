@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Copy, Maximize, Minimize, Minus, Radio, Square, X } from 'lucide-react';
 import { usePlayerChromeSettingsStore } from '../stores/usePlayerChromeSettingsStore';
-import ThemedDialog from './shared/ThemedDialog';
 
 export default function WindowControls({
     revealed,
@@ -18,7 +17,6 @@ export default function WindowControls({
     const { t } = useTranslation();
     const [isMaximized, setIsMaximized] = useState(false);
     const [isFullscreen, setIsFullscreen] = useState(false);
-    const [isCloseMenuOpen, setIsCloseMenuOpen] = useState(false);
     const useNativeMacFullscreenButton = usePlayerChromeSettingsStore(state => state.useNativeMacFullscreenButton);
     const electron = window.electron;
     const isMac = electron?.platform === 'darwin';
@@ -78,7 +76,6 @@ export default function WindowControls({
     }`;
 
     return (
-        <>
         <div
             className={`flex h-full ${isDaylight ? 'text-zinc-800' : 'text-[var(--text-primary)]'}`}
             style={{
@@ -137,61 +134,10 @@ export default function WindowControls({
             <button
                 className={closeBtnClass}
                 tabIndex={standardControlsVisible ? 0 : -1}
-                title={t('ui.closeWindowTitle')}
-                aria-label={t('ui.closeWindowTitle')}
-                onClick={() => setIsCloseMenuOpen(true)}
+                onClick={() => electron.closeWindow()}
             >
                 <X size={16} />
             </button>
         </div>
-        <ThemedDialog
-            isOpen={isCloseMenuOpen}
-            onClose={() => setIsCloseMenuOpen(false)}
-            isDaylight={isDaylight}
-            title={t('ui.closeWindowTitle')}
-            description={t('ui.closeWindowHint')}
-            footer={(
-                <>
-                    <button
-                        type="button"
-                        onClick={() => setIsCloseMenuOpen(false)}
-                        className={`rounded-full border px-5 py-2.5 text-sm font-medium transition-colors ${
-                            isDaylight
-                                ? 'border-black/10 bg-black/5 text-zinc-800 hover:bg-black/10'
-                                : 'border-white/10 bg-white/5 text-white hover:bg-white/10'
-                        }`}
-                    >
-                        {t('ui.cancel')}
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => {
-                            setIsCloseMenuOpen(false);
-                            void electron.hideWindow?.();
-                        }}
-                        className={`rounded-full border px-5 py-2.5 text-sm font-medium transition-colors ${
-                            isDaylight
-                                ? 'border-black/10 bg-black/5 text-zinc-800 hover:bg-black/10'
-                                : 'border-white/10 bg-white/5 text-white hover:bg-white/10'
-                        }`}
-                    >
-                        {t('ui.hideWindow')}
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => {
-                            setIsCloseMenuOpen(false);
-                            void electron.quitApp();
-                        }}
-                        className="rounded-full bg-red-500 px-5 py-2.5 text-sm font-medium text-white shadow-lg shadow-red-500/20 transition-colors hover:bg-red-600"
-                    >
-                        {t('ui.quitApp')}
-                    </button>
-                </>
-            )}
-        >
-            <></>
-        </ThemedDialog>
-        </>
     );
 }

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import '../../src/i18n/config';
 import GridViewOverlayHost from '../../src/library/app/GridViewOverlayHost';
 import type { ProbeDefinition } from './definition';
@@ -25,6 +25,20 @@ const LibraryBehaviorProbe: React.FC = () => {
     const harness = useLibraryProbeHarness();
     // 墙上打字交给 bravais 缝里的过滤输入位（命令面板那一支的替身，见 paletteTypingStandIn）。
     usePaletteTypingStandIn();
+
+    // 手动点检的直达：?suite=bravais&artist=artist-main 在就绪后切 suite、打开那个歌手页（与 window.__libraryProbe 同一条路）。
+    const ready = harness.ready;
+    useEffect(() => {
+        if (!ready) return undefined;
+        const params = new URLSearchParams(window.location.search);
+        const suite = params.get('suite');
+        const artist = params.get('artist');
+        const api = window.__libraryProbe;
+        if (!api || (!suite && !artist)) return undefined;
+        if (suite) api.setSuite(suite as Parameters<typeof api.setSuite>[0]);
+        const timer = artist ? window.setTimeout(() => api.openArtist(artist as Parameters<typeof api.openArtist>[0]), 600) : 0;
+        return () => window.clearTimeout(timer);
+    }, [ready]);
 
     return (
         <div className="fixed inset-0" style={{ backgroundColor: 'var(--bg-color)', color: 'var(--text-primary)' }}>

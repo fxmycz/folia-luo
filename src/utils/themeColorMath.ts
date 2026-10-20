@@ -122,12 +122,6 @@ export const getRelativeLuminance = (color: string) => {
     return 0.2126 * transform(parsed.r) + 0.7152 * transform(parsed.g) + 0.0722 * transform(parsed.b);
 };
 
-// 在给定底色上挑一枚可读的文本色：浅底配深字、深底配白字。
-// 用于主题 accent 直接当按钮底色时，避免浅色 accent（黄、浅绿等）配白字看不清。
-export const getReadableTextColor = (background: string) => (
-    getRelativeLuminance(background) > 0.55 ? '#18181b' : '#ffffff'
-);
-
 export const getContrastRatio = (foreground: string, background: string) => {
     const luminanceA = getRelativeLuminance(foreground);
     const luminanceB = getRelativeLuminance(background);

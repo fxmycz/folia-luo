@@ -43,3 +43,13 @@ export const resolveLikeAvailability = (
 
     return { disabled: false, reason: null };
 };
+
+/**
+ * 私人 FM 的「不喜欢」能不能用：只有 provider 真有 dislikeSong 才行。没有时（QQ、波点）垃圾桶置灰，
+ * 不再假装记下了「不喜欢」、实际只切到下一首。
+ */
+export const canDislikeCurrentSong = (currentSong: SongResult | null): boolean => (
+    Boolean(currentSong)
+    && getPlaybackSourceRef(currentSong as SongResult).kind === 'online'
+    && omni.canDislikeSong(currentSong as SongResult)
+);

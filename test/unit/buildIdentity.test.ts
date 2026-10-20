@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { normalizeBuildCommit, parseGitHubRepo, resolveBuildRepo } from '../../dev/build/buildIdentity.mjs';
+import { normalizeBuildCommit, parseGitHubRepo, resolveBuildKind, resolveBuildRepo, resolveDevBuildKindOverride } from '../../dev/build/buildIdentity.mjs';
 
 // test/unit/buildIdentity.test.ts
 
@@ -52,5 +52,43 @@ describe('normalizeBuildCommit', () => {
         expect(normalizeBuildCommit('unknown, probably dev version')).toBe('dev');
         expect(normalizeBuildCommit('')).toBe('dev');
         expect(normalizeBuildCommit(undefined)).toBe('dev');
+    });
+});
+
+describe('resolveBuildKind', () => {
+    const upstreamCi = { GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'chthollyphile/folia-major' };
+
+    it('only treats GitHub Actions runs of the upstream repository as official', () => {
+        expect(resolveBuildKind(upstreamCi)).toEqual({ kind: 'official', host: null });
+    });
+
+    it('treats the documented deployments as self-hosted, including official Docker images', () => {
+        expect(resolveBuildKind({ ...upstreamCi, APP_RELEASE_CHANNEL: 'docker' })).toEqual({ kind: 'self-hosted', host: 'docker' });
+        expect(resolveBuildKind({ APP_RELEASE_CHANNEL: 'docker' })).toEqual({ kind: 'self-hosted', host: 'docker' });
+        expect(resolveBuildKind({ VERCEL: '1', VERCEL_GIT_REPO_OWNER: 'someone', VERCEL_GIT_REPO_SLUG: 'folia-major' })).toEqual({ kind: 'self-hosted', host: 'vercel' });
+        expect(resolveBuildKind({ CF_PAGES: '1' })).toEqual({ kind: 'self-hosted', host: 'cloudflare' });
+        expect(resolveBuildKind({ WORKERS_CI: '1' })).toEqual({ kind: 'self-hosted', host: 'cloudflare' });
+    });
+
+    it('marks fork CI and local builds as unofficial', () => {
+        expect(resolveBuildKind({ GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'someone/folia-major' }).kind).toBe('unofficial');
+        expect(resolveBuildKind({ GITHUB_REPOSITORY: 'chthollyphile/folia-major' }).kind).toBe('unofficial');
+        expect(resolveBuildKind({ FOLIA_BUILD_REPO: 'chthollyphile/folia-major' }).kind).toBe('unofficial');
+        expect(resolveBuildKind({}).kind).toBe('unofficial');
+    });
+});
+
+describe('resolveDevBuildKindOverride', () => {
+    it('pins the dev server to the requested kind', () => {
+        expect(resolveDevBuildKindOverride('serve', { FOLIA_DEV_BUILD_KIND: 'official' })).toEqual({ kind: 'official', host: null });
+        expect(resolveDevBuildKindOverride('serve', { FOLIA_DEV_BUILD_KIND: ' Unofficial ' })).toEqual({ kind: 'unofficial', host: null });
+        expect(resolveDevBuildKindOverride('serve', { FOLIA_DEV_BUILD_KIND: 'self-hosted' })).toEqual({ kind: 'self-hosted', host: null });
+    });
+
+    it('never applies to builds, and ignores unknown or missing values', () => {
+        // 打包产物的类别只由 resolveBuildKind 决定：这个变量冒充不了官方构建。
+        expect(resolveDevBuildKindOverride('build', { FOLIA_DEV_BUILD_KIND: 'official' })).toBeNull();
+        expect(resolveDevBuildKindOverride('serve', { FOLIA_DEV_BUILD_KIND: 'trusted' })).toBeNull();
+        expect(resolveDevBuildKindOverride('serve', {})).toBeNull();
     });
 });

@@ -10,9 +10,6 @@ const PAGE_TARGET_BY_VIEW: Record<AppView, PonderTargetId> = {
     home: 'grid-page',
     player: 'player-page',
     lattice: 'lattice-page',
-    // 自定义音源版块没有自己的教程：它是一张导入/管理脚本的表单，不是可教的交互页面。
-    // 页面教程落到入门总览，至少不会指着一个不存在的 target。
-    lx: 'help-page',
 };
 
 const PAGE_SCOPE_TARGETS = new Set<PonderTargetId>([

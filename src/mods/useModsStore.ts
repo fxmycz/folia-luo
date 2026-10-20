@@ -1,7 +1,9 @@
 import { create } from 'zustand';
 import {
     cancelExport,
+    clearModCache,
     getFfmpegStatus,
+    getModStorageUsage,
     installModFromZip,
     isModsBridgeAvailable,
     listMods,
@@ -12,9 +14,17 @@ import {
     subscribeModLogs,
     subscribeModsState,
 } from './ipc';
-import type { ModExportProgress, ModFfmpegStatus, ModLogEntry, ModRuntimeInfo, ModSetEnabledResult } from './types';
-import { reconcileFoliumClients } from './folium/clientLoader';
-import { restoreSavedFoliumSelections } from './folium/missingEntries';
+import type {
+    ModClearCacheResult,
+    ModExportProgress,
+    ModFfmpegStatus,
+    ModLogEntry,
+    ModRuntimeInfo,
+    ModSetEnabledResult,
+    ModStorageUsageResult,
+} from './types';
+import { reconcileFoliumClients } from './runtime/clientLoader';
+import { restoreSavedFoliumSelections } from './runtime/missingEntries';
 
 // src/mods/useModsStore.ts
 // Renderer-side state for the mod system panel. All mutations flow through the
@@ -23,11 +33,16 @@ import { restoreSavedFoliumSelections } from './folium/missingEntries';
 
 const MAX_LOG_ENTRIES = 50;
 
+/** The `data-settings-row` of a mod's row in the manager, so the settings window can land on it. */
+export const modSettingsRowId = (modId: string) => `mod:${modId}`;
+
 interface ModsStoreState {
     bridgeAvailable: boolean;
     mods: ModRuntimeInfo[];
     ffmpeg: ModFfmpegStatus;
     directories: string[];
+    /** This run of the app was started (or its window reopened) without mods; nothing is stored. */
+    startSkipped: boolean;
     selectedModId: string | null;
     exportProgress: ModExportProgress | null;
     logs: ModLogEntry[];
@@ -40,6 +55,8 @@ interface ModsStoreState {
     cancelActiveExport: () => Promise<void>;
     openModsDirectory: () => Promise<{ ok: boolean; directory?: string; error?: string }>;
     installModFromZip: (zipPath: string) => Promise<{ ok: boolean; id?: string; error?: string }>;
+    getModStorageUsage: (modId: string) => Promise<ModStorageUsageResult>;
+    clearModCache: (modId: string) => Promise<ModClearCacheResult>;
     bindEvents: () => void;
 }
 
@@ -48,6 +65,7 @@ export const useModsStore = create<ModsStoreState>((set, get) => ({
     mods: [],
     ffmpeg: { available: false, path: null, version: null, candidates: [] },
     directories: [],
+    startSkipped: false,
     selectedModId: null,
     exportProgress: null,
     logs: [],
@@ -61,6 +79,7 @@ export const useModsStore = create<ModsStoreState>((set, get) => ({
                 mods: payload.mods,
                 ffmpeg: payload.ffmpeg,
                 directories: payload.directories,
+                startSkipped: payload.startSkipped,
                 selectedModId: payload.mods.some((mod) => mod.id === selectedModId)
                     ? selectedModId
                     : payload.mods[0]?.id ?? null,
@@ -106,6 +125,11 @@ export const useModsStore = create<ModsStoreState>((set, get) => ({
         }
         return result;
     },
+
+    // Asked for when a mod row expands, never kept here: counting walks the directories.
+    getModStorageUsage: (modId) => getModStorageUsage(modId),
+
+    clearModCache: (modId) => clearModCache(modId),
 
     bindEvents: () => {
         if (get().eventsBound) {

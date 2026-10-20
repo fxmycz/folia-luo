@@ -24,6 +24,11 @@ export const modManagerClassesFor = (isDaylight: boolean) => ({
     danger: isDaylight
         ? 'border-red-500/25 bg-red-500/10 text-red-700'
         : 'border-red-400/20 bg-red-500/10 text-red-300',
+    // Beta (preview-channel) signatures: kept off amber so a preview build never reads as an
+    // invalid signature, and off emerald so it never reads as officially verified.
+    preview: isDaylight
+        ? 'border-violet-500/25 bg-violet-500/10 text-violet-700'
+        : 'border-violet-400/20 bg-violet-500/10 text-violet-300',
     success: isDaylight
         ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700'
         : 'border-emerald-400/20 bg-emerald-500/10 text-emerald-300',

@@ -4,8 +4,8 @@
 
 import { isMaintainerAssociation } from './config.mjs';
 
-export const CLOSE_REASONS = ['duplicate', 'qr-aggregate', 'invalid', 'out_of_scope', 'needs-info-timeout', 'stale'];
-const TRIAGE_REASONS = new Set(['duplicate', 'qr-aggregate', 'invalid', 'out_of_scope']);
+export const CLOSE_REASONS = ['duplicate', 'qr-aggregate', 'web-deployment', 'unofficial-build', 'invalid', 'out_of_scope', 'needs-info-timeout', 'stale'];
+const TRIAGE_REASONS = new Set(['duplicate', 'qr-aggregate', 'web-deployment', 'unofficial-build', 'invalid', 'out_of_scope']);
 
 // 判断能否关闭。history 来自时间线与评论：{ reopened, botClosedBefore, maintainerCommented }。
 // evidence 是各关闭理由的依据，结构见下方各分支。返回 { allowed, blockedBy }。
@@ -37,6 +37,12 @@ export function canClose({ reason, issue, history, evidence = {}, mode, closesSo
     if (reason === 'qr-aggregate') {
         const { target } = evidence;
         if (!target || !target.open || target.number === issue.number) blockedBy.push('汇总 issue 不存在或已关闭');
+    }
+    if (reason === 'web-deployment') {
+        if (!evidence.causes?.length) blockedBy.push('诊断报告没有确定性命中网页版部署问题');
+    }
+    if (reason === 'unofficial-build') {
+        if (evidence.build !== 'unofficial') blockedBy.push('诊断报告的 build 行不是 unofficial');
     }
     if (reason === 'invalid') {
         if (!evidence.effectivelyEmpty) blockedBy.push('正文并非空模板');

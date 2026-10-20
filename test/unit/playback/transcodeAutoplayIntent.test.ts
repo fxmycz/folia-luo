@@ -64,7 +64,7 @@ vi.mock('../../../src/services/playbackGraph', () => ({ buildPlaybackGraph: vi.f
 vi.mock('../../../src/services/playedTrackCache', () => ({ cachePlayedTrackAssets: vi.fn() }));
 vi.mock('../../../src/services/automix/crossfadeGraph', () => ({ rampGain: vi.fn() }));
 
-const { usePlaybackAudioBridge } = await import('../../../src/hooks/usePlaybackAudioBridge');
+const { usePlaybackAudioBridge } = await import('../../../src/components/app/playback/bridges/usePlaybackAudioBridge');
 
 const FAILED_SRC = 'blob:folia/undecodable-track';
 
@@ -96,7 +96,6 @@ const renderBridge = (deck: ReturnType<typeof createDeck>, shouldAutoPlayRef: { 
         syncOutputGain: vi.fn(),
         getTargetPlaybackVolume: () => 1,
         getCoverUrl: () => null,
-        updateCacheSize: vi.fn(),
     } as never);
     reactHooks.flush();
 };

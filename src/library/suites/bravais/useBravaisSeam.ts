@@ -3,11 +3,13 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Mutable
 import { blockSeamPlan, getSeamGeometry } from '../../../components/wall/seamPlan';
 import type { WallViewCenter } from '../../../components/wall/wallView';
 import { BRAVAIS_METRICS, BRAVAIS_SEAM_TWEEN_S } from './bravaisConstants';
+import { planPosterOpening, seamEdgeFor } from './bravaisFrame';
 import type { BravaisLayer } from './bravaisLayer';
 import { useBravaisSeamStore } from './bravaisSeamLevel';
 import { resolveSeamContentIdentity, resolveVariantWidth, type BravaisSeamContentVariant } from './bravaisSeamTarget';
 import { clearSeamFlipPhase, playSeamFlipIn, playSeamFlipOut } from './bravaisSeamMotion';
 import type { BravaisFrameState } from './useBravaisFrame';
+import type { BravaisWallShape } from './bravaisWallShape';
 
 // src/library/suites/bravais/useBravaisSeam.ts
 // 缝（设计稿 §5）：锚点（块边界的世界 x，React state——墙按它分左右两半）、开口宽度的补间（只写帧状态）、
@@ -35,6 +37,7 @@ export const useBravaisSeam = ({
     reducedTransitions,
     tweenCamera,
     checkCull,
+    getShape,
 }: {
     frameRef: MutableRefObject<BravaisFrameState>;
     renderFrame: () => void;
@@ -50,6 +53,8 @@ export const useBravaisSeam = ({
     tweenCamera: (center: WallViewCenter) => void;
     /** 开口变了（可见的世界范围随之变了）：让相机检查要不要重新裁剪；force = 开口落定，按含开口的范围裁剪一次。 */
     checkCull: (force?: boolean) => void;
+    /** 墙此刻的形状（缝开在它的块边界上）。 */
+    getShape: () => BravaisWallShape;
 }) => {
     const level = useBravaisSeamStore(state => state.level);
     const [anchorX, setAnchorState] = useState<number | null>(null);
@@ -72,19 +77,27 @@ export const useBravaisSeam = ({
         return geometry.screenX > 0 && geometry.screenX < view.width;
     }, [frameRef]);
 
-    /** 要张开 `width` 的缝：选块边界、算相机的最小让位（相对 `center`，返回让位后的视图中心）。 */
-    const planOpening = useCallback((center: WallViewCenter, width: number, preferAnchor: boolean) => {
+    /**
+     * 要张开 `width` 的缝：选块边界、算相机的最小让位（相对 `center`，返回让位后的视图中心）。
+     * poster（歌手海报）：照样从块边界裂开，相机把它带到视口最左边（bravaisFrame 的 planPosterOpening）。
+     */
+    const planOpening = useCallback((center: WallViewCenter, width: number, preferAnchor: boolean, poster = false, shape = getShape()) => {
         const { view, anchorX: current } = frameRef.current;
         if (!view) return { anchorX: current, center };
+        if (poster) {
+            return planPosterOpening({ center, view, width, preferX: preferAnchor && current !== null ? current : undefined });
+        }
         const plan = blockSeamPlan({
             cameraX: center.x,
             openWidth: width,
             view,
             metrics: BRAVAIS_METRICS,
+            // 缝开在墙此刻形状的块边界上（探索形状的块含街）。
+            blockWidth: shape.blockSize.width,
             preferX: preferAnchor && current !== null ? current : undefined,
         });
         return { anchorX: plan.x, center: { x: plan.cameraX, y: center.y } };
-    }, [frameRef]);
+    }, [frameRef, getShape]);
 
     /** 开口补间到目标宽度（每帧只写帧状态与 DOM；途中快到裁剪边缘时补裁剪，落定时按含开口的可见范围裁剪一次）。 */
     const tweenWidth = useCallback((to: number, from = frameRef.current.openWidth) => {
@@ -118,6 +131,12 @@ export const useBravaisSeam = ({
     const hasLayer = Boolean(layer);
     // 「折叠」看的是生效的内容（过滤框、面板、表单开着时折叠等级暂不生效）。
     const isFolded = hasLayer && targetVariant === 'none';
+    // 歌手海报（贴边不收窄）：在开口补间与换层编排（useBravaisDisplay 的 layout effect，排在这之后）之前写进帧状态。
+    const isPoster = hasLayer && targetVariant === 'poster';
+    useLayoutEffect(() => {
+        frameRef.current.poster = isPoster;
+        renderFrame();
+    }, [frameRef, isPoster, renderFrame]);
     useEffect(() => {
         frameRef.current.hidden = isFolded;
         tweenWidth(targetWidth);
@@ -132,10 +151,10 @@ export const useBravaisSeam = ({
         previousOpeningRef.current = { layerKey, width: targetWidth };
         if (previous.layerKey !== layerKey || previous.width === targetWidth) return;
         if (!layer || targetWidth <= 0) return;
-        const plan = planOpening(frameRef.current.center, targetWidth, isAnchorOnScreen());
+        const plan = planOpening(frameRef.current.center, targetWidth, isAnchorOnScreen(), isPoster);
         if (plan.anchorX !== frameRef.current.anchorX) setAnchor(plan.anchorX);
         tweenCamera(plan.center);
-    }, [frameRef, isAnchorOnScreen, layer, layerKey, planOpening, setAnchor, targetWidth, tweenCamera]);
+    }, [frameRef, isAnchorOnScreen, isPoster, layer, layerKey, planOpening, setAnchor, targetWidth, tweenCamera]);
 
     // 缝里的内容：换层（首页换页签也是换层，2026-10-09 起整条翻）或换形态时翻转（转到 90° 换内容与排版宽度），同一层的
     // 数据更新就地刷新（渲染时取最新的层）。
@@ -226,17 +245,17 @@ export const useBravaisSeam = ({
     /** 自动出屏收起后，在当前视口里裂开一道新缝（不拉回原锚点，设计稿 §5）。 */
     const reopenHere = useCallback(() => {
         if (!layer || targetWidth <= 0) return;
-        const plan = planOpening(frameRef.current.center, targetWidth, false);
+        const plan = planOpening(frameRef.current.center, targetWidth, false, isPoster);
         setAnchor(plan.anchorX);
         tweenWidth(targetWidth, 0);
         tweenCamera(plan.center);
-    }, [frameRef, layer, planOpening, setAnchor, targetWidth, tweenCamera, tweenWidth]);
+    }, [frameRef, isPoster, layer, planOpening, setAnchor, targetWidth, tweenCamera, tweenWidth]);
 
     /** 此刻缝本该张开却被挤到屏外收起了（边缘标签在场）。 */
     const isCollapsed = useCallback(() => {
-        const { anchorX: x, view, center, openWidth } = frameRef.current;
+        const { anchorX: x, view, center, openWidth, poster } = frameRef.current;
         if (x === null || !view || targetWidth <= 0) return false;
-        return getSeamGeometry({ anchorX: x, cameraX: center.x, openWidth: Math.max(openWidth, targetWidth), view }).collapsed;
+        return getSeamGeometry({ anchorX: x, cameraX: center.x, openWidth: Math.max(openWidth, targetWidth), view, edge: seamEdgeFor(poster) }).collapsed;
     }, [frameRef, targetWidth]);
 
     const contentWidth = resolveVariantWidth(rendered.variant, viewportWidth);

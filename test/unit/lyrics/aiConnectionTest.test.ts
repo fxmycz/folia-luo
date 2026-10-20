@@ -57,6 +57,16 @@ describe('runAiConnectionTest (OpenAI compatible)', () => {
         expect(typeof result.durationMs).toBe('number');
     });
 
+    it('redacts the key from a successful reply that echoes it', async () => {
+        const { customFetch } = makeFetch(() => json({
+            choices: [{ message: { content: 'You sent Bearer sk-secret, key sk-secret' }, finish_reason: 'stop' }],
+        }));
+        const result = await client.runAiConnectionTest(openai(), { customFetch });
+
+        expect(result.ok).toBe(true);
+        expect(result.text).not.toContain('sk-secret');
+    });
+
     it('uses max_completion_tokens on the official OpenAI host', async () => {
         const { calls, customFetch } = makeFetch(() => json({ choices: [{ message: { content: 'hi' } }] }));
         const result = await client.runAiConnectionTest(

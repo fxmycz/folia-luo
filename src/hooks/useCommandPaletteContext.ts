@@ -1,13 +1,11 @@
-import { useLatticeControlsStore } from '../stores/useLatticeControlsStore';
 import { useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { selectDisplayLyrics, selectDisplayPlayerState, usePlaybackStore } from '../stores/usePlaybackStore';
-import { useSearchNavigationStore } from '../stores/useSearchNavigationStore';
 import { setIsPanelOpen, setPanelTab, useAppViewStore } from '../stores/useAppViewStore';
 import { useGridSurfaceStore } from '../stores/useGridSurfaceStore';
-import { useLibraryDirectorySurfaceStore } from '../library/core/state/useLibraryDirectorySurfaceStore';
-import { useLibraryArtistSurfaceStore } from '../library/core/state/useLibraryArtistSurfaceStore';
-import { useLibrarySuiteChromeStore } from '../library/core/state/useLibrarySuiteChromeStore';
+import { useLibraryDirectorySurfaceStore } from '../library/core/directory/useLibraryDirectorySurfaceStore';
+import { useLibraryArtistSurfaceStore } from '../library/core/artist/useLibraryArtistSurfaceStore';
+import { useLibrarySuiteChromeStore } from '../library/core/suite/useLibrarySuiteChromeStore';
 import { useShallow } from 'zustand/react/shallow';
 import type { CommandPaletteContext } from '../components/command-palette/types';
 import {
@@ -37,6 +35,7 @@ import { useLyricSegmentationStore } from '../stores/useLyricSegmentationStore';
 import { useLatticeSettingsStore } from '../stores/useLatticeSettingsStore';
 import { useInteractionSettingsStore } from '../stores/useInteractionSettingsStore';
 import type { LyricSegmentationActions } from '../components/app/playback/createLyricSegmentationActions';
+import { selectNativeHomeTabWithoutSurface } from '../components/app/home/foliumHomePageDismissal';
 
 // src/hooks/useCommandPaletteContext.ts
 // Assembles the command palette's namespaced context.
@@ -54,7 +53,7 @@ import type { LyricSegmentationActions } from '../components/app/playback/create
 const AMBIENT_KEYS = [
     't', 'currentSong', 'lyrics', 'playerState',
     'queue', 'isFmMode',
-    'setHomeViewTab', 'setPanelTab', 'setIsPanelOpen',
+    'selectHomeViewTab', 'setPanelTab', 'setIsPanelOpen',
 ] as const;
 
 type AmbientKey = (typeof AMBIENT_KEYS)[number];
@@ -78,7 +77,6 @@ export const useCommandPaletteContext = (
     const queue = usePlaybackStore(state => state.playQueue);
     const isFmMode = usePlaybackStore(state => state.isFmMode);
     const queuePaletteKeepOpen = useInteractionSettingsStore(state => state.queuePaletteKeepOpen);
-    const setHomeViewTab = useSearchNavigationStore(state => state.setHomeViewTab);
     // What is on screen, transitions included: surfaces that publish lyrics (the mod runtime
     // snapshot) must send the rendered ones, not a guess rebuilt from the song's stored state.
     const lyrics = usePlaybackStore(selectDisplayLyrics);
@@ -95,10 +93,11 @@ export const useCommandPaletteContext = (
         playerState,
         queue,
         isFmMode,
-        setHomeViewTab,
+        // 首页 surface 不在时选原生页签：写 homeViewTab，并关掉开着的模组首页页面（见 foliumHomePageDismissal）。
+        selectHomeViewTab: selectNativeHomeTabWithoutSurface,
         setPanelTab,
         setIsPanelOpen,
-    }), [t, currentSong, lyrics, playerState, queue, isFmMode, setHomeViewTab]);
+    }), [t, currentSong, lyrics, playerState, queue, isFmMode]);
 
     // Narrow subscriptions: these are the store fields the palette displays or gates on.
     const settingsSignals = useTypographySettingsStore(useShallow(state => ({
@@ -145,7 +144,6 @@ export const useCommandPaletteContext = (
     const lyricStaffAbsorbMode = useLyricSettingsStore(state => state.lyricStaffAbsorbMode);
     const personalFmSelection = usePersonalFmModeStore(state => state.selection);
     // Which surface the palette is opening over; commands that only apply to one of them gate on it.
-    const latticeFocusAction = useLatticeControlsStore(state => state.focusCurrentSong);
     const view = useAppViewStore(state => state.view);
     // Whoever currently reads typed characters. Identity only changes when a grid takes or gives up
     // the keyboard, so it does not rebuild the context per keystroke — the query itself never
@@ -211,6 +209,6 @@ export const useCommandPaletteContext = (
         settingsSignals, chromeSignals, desktopSignals, automixSignals,
         sleepTimerSignals, latticeSignals, audioSignals, visualizerSignals,
         lyricStaffPolicy, lyricStaffAbsorbMode, personalFmSelection, view, commandFilter, gridSurface, directorySurface, artistSurface, suiteChrome, canAddCurrentSongToPlaylist,
-        lyricSegmentationRecord, lyricSegmentationActions, latticeFocusAction,
+        lyricSegmentationRecord, lyricSegmentationActions,
     ]);
 };

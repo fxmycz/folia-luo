@@ -12,11 +12,13 @@ import { buildLineRenderHints, getLineRenderHints } from '@/utils/lyrics/renderH
 import { isValidWordSegmentation } from '@/utils/lyrics/wordSegmentation';
 import { getLineBackgroundVocals } from '@/components/visualizer/harmonyRuntime';
 import { getPlaybackSourceRef } from '@/utils/appPlaybackGuards';
+import type { OnlineFailureCaseId } from '@/types/onlineMusic';
 import type {
     FoliumBackgroundVocal,
     FoliumLine,
     FoliumLyricAlternateText,
     FoliumLyricSyllable,
+    FoliumPlaybackFailureReason,
     FoliumSong,
     FoliumTheme,
     FoliumWord,
@@ -160,6 +162,10 @@ const describeSource = (song: SongResult): string | null => {
  * (playSong, enqueue, beforePlay.replaceWith) without ever holding a
  * SongResult. The same host object always gets the same token; the map is
  * bounded, so a token for a long-gone song eventually stops resolving.
+ * Eviction is least recently handed out, not oldest minted: a reused token
+ * moves to the end of the map, so minting the rest of one getQueue page (at
+ * most 500 songs, well under the bound) can never evict a token that same
+ * page has just returned.
  */
 const MAX_SONG_REFS = 2000;
 const refBySong = new WeakMap<SongResult, string>();
@@ -168,7 +174,12 @@ let refCounter = 0;
 
 const refFor = (song: SongResult): string => {
     const existing = refBySong.get(song);
-    if (existing && songByRef.has(existing)) return existing;
+    if (existing && songByRef.has(existing)) {
+        // Map keeps insertion order: delete and set again to mark the token as just used.
+        songByRef.delete(existing);
+        songByRef.set(existing, song);
+        return existing;
+    }
     refCounter += 1;
     const ref = `song-${refCounter.toString(36)}`;
     refBySong.set(song, ref);
@@ -196,6 +207,34 @@ export const toFoliumSong = (song: SongResult | null | undefined): FoliumSong | 
         ref: refFor(song),
     };
 };
+
+// Host reason codes are not API: mods see five coarse classes. A Record so a new host reason fails
+// the type check until it is classed here.
+const FOLIUM_PLAYBACK_FAILURE_REASONS: Readonly<Record<OnlineFailureCaseId, FoliumPlaybackFailureReason>> = Object.freeze({
+    'sign-in-needed': 'auth',
+    'subscription-required': 'restricted',
+    'purchase-required': 'restricted',
+    'entitlement-required': 'restricted',
+    'preview-only': 'restricted',
+    'region-restricted': 'restricted',
+    'not-public': 'restricted',
+    'taken-down': 'taken-down',
+    unreachable: 'network',
+    'local-service-stopped': 'network',
+    'retry-later': 'network',
+    'not-configured': 'unknown',
+    'no-audio': 'unknown',
+    'audio-unplayable': 'unknown',
+    refused: 'unknown',
+    unknown: 'unknown',
+});
+
+/** The coarse Folium class of a host failure reason; no reason (a path without one) is `unknown`. */
+export const toFoliumPlaybackFailureReason = (reason: OnlineFailureCaseId | null | undefined): FoliumPlaybackFailureReason => (
+    reason && Object.prototype.hasOwnProperty.call(FOLIUM_PLAYBACK_FAILURE_REASONS, reason)
+        ? FOLIUM_PLAYBACK_FAILURE_REASONS[reason]
+        : 'unknown'
+);
 
 /** Song DTO from the title/artist pair visualizers receive (no SongResult there). */
 export const toFoliumSongFromMeta = (

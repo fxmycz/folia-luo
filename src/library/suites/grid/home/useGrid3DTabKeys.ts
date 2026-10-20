@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { hasBlockingWindow, isTextEntryTarget } from '../../../../utils/keyboardTargets';
 
 // src/library/suites/grid/home/useGrid3DTabKeys.ts
-// 网格首页的 Tab / Shift+Tab：在顶部胶囊的内容页签之间循环（与 TUI 首页的 Tab 同一个键）。只走可用的页签，
+// 网格首页的 Tab / Shift+Tab：在顶部胶囊的内容页签（含扩展入口）之间循环（与 TUI 首页的 Tab 同一个键）。只走可用的页签，
 // Stage 与 Lattice 属于「去哪儿」，不入列。输入框里的 Tab 不抢，上层窗口打开时让路；长按不连发。
 
 type Grid3DTabKeys = {

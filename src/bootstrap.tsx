@@ -9,13 +9,12 @@ import ObsBrowserSourceApp from './components/obs/ObsBrowserSourceApp';
 import ObsNowPlayingSourceApp from './components/obs/ObsNowPlayingSourceApp';
 import ObsPlayerCapSourceApp from './components/obs/ObsPlayerCapSourceApp';
 import { initializeLocalCoverRuntime } from './services/localCoverRuntime';
-import { initFoliumClients } from './mods/folium/clientLoader';
-import { restoreSavedFoliumSelections } from './mods/folium/missingEntries';
-import { installFoliumCommandPaletteSync } from './mods/folium/commandPaletteSync';
-import { installFoliumHostEvents } from './mods/folium/hostEvents';
+import { installFoliumHomePageDismissal } from './components/app/home/foliumHomePageDismissal';
 import { installLibrarySuiteChromeCommands } from './library/app/installLibrarySuiteChromeCommands';
+import { noteFoliumFirstScreenMounted, startFoliumForMainWindow } from './mods/runtime/mainWindowStart';
 import { installNativeDragGuard } from './utils/nativeDragGuard';
 import { bootNavidromeServerPreset } from './services/navidromeServerPreset';
+import { installLuoxue } from './luoxue/bootstrap';
 import { isNavidromeEnabled } from './services/navidromeService';
 import { setNavidromeEnabledState } from './stores/useLibraryStore';
 import { isMainAppSurface, isObsBrowserSourceSurface, isRemoteControlSurface, obsSourceKind } from './utils/appSurface';
@@ -31,7 +30,14 @@ import './stores/useMotionSettingsStore';
 // stored mode. The store initializes eagerly through the static import graph,
 // so the mode it read may already have fallen back to a builtin; after mod
 // clients register their entries we restore the saved selections
-// (src/mods/folium/missingEntries.ts, which also re-runs on every mod reload).
+// (src/mods/runtime/missingEntries.ts, which also re-runs on every mod reload).
+//
+// So the first screen waits for the mods' clients, but not for long: all of
+// them together get FIRST_SCREEN_MOD_WAIT_MS. A mod that is not up by then
+// keeps starting behind the first screen, and its saved style or background
+// comes back when it is (src/mods/runtime/mainWindowStart.ts). The cap is here
+// and nowhere else: the export window waits for its mods in full.
+const FIRST_SCREEN_MOD_WAIT_MS = 1500;
 
 // #394: with a selection on the page, native drag-and-drop would hijack slider gestures. Installed
 // here, for every surface this bundle mounts, rather than inside App so the remote-control and OBS
@@ -53,6 +59,16 @@ const isRemoteControl = isRemoteControlSurface;
 // also has the Electron bridge, but mod state pushes only reach the main
 // window, so a client activated there would never be torn down.
 const isMainApp = isMainAppSurface;
+
+// Its effect runs after the effects of everything inside it in the same commit, so by then every
+// mod `mount` of the first screen has returned: the moment the mods' start counts as over.
+const FirstScreenMounted: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+    React.useEffect(() => {
+        noteFoliumFirstScreenMounted();
+    }, []);
+    return <>{children}</>;
+};
+
 const renderApp = () => root.render(
     <React.StrictMode>
       <AppSplashGate>
@@ -64,7 +80,7 @@ const renderApp = () => root.render(
               ? <ObsBrowserSourceApp />
               : isRemoteControl
                 ? <RemoteControlApp />
-                : <App />}
+                : <FirstScreenMounted><App /></FirstScreenMounted>}
       </AppSplashGate>
     </React.StrictMode>
   );
@@ -76,10 +92,9 @@ if (isMainApp) installLibrarySuiteChromeCommands();
 
 const bootFolium = async () => {
     if (!isMainApp) return;
-    installFoliumCommandPaletteSync();
-    installFoliumHostEvents();
-    await initFoliumClients();
-    restoreSavedFoliumSelections();
+    // 显式打开集合时关掉开着的模组首页页面；与 Home 挂没挂着无关，所以在这里装（见 foliumHomePageDismissal）。
+    installFoliumHomePageDismissal();
+    await startFoliumForMainWindow({ firstScreenWaitMs: FIRST_SCREEN_MOD_WAIT_MS });
 };
 
 // Docker 预置的 Navidrome 凭据要在渲染前落进 localStorage（原因见 services/navidromeServerPreset.ts）。
@@ -91,12 +106,20 @@ const bootNavidrome = async () => {
     if (result === 'applied') setNavidromeEnabledState(isNavidromeEnabled());
 };
 
+// 洛雪版块：把移植过来的音源接进 omni、装配自定义音源运行时。幂等且同步，失败不影响其余启动流程。
+const bootLuoxue = async () => {
+    if (!isMainApp) return;
+    installLuoxue();
+};
+
 // allSettled：mod 加载失败也要等预置写完再渲染，失败原因单独打出来，不吞掉。
-void Promise.allSettled([bootFolium(), bootNavidrome()])
-    .then(([folium, navidrome]) => {
+void Promise.allSettled([bootFolium(), bootNavidrome(), bootLuoxue()])
+    .then(([folium, navidrome, luoxue]) => {
         if (folium.status === 'rejected') console.error('[Bootstrap] Folium boot failed:', folium.reason);
         if (navidrome.status === 'rejected') console.warn('[Navidrome] Server preset boot failed:', navidrome.reason);
+        if (luoxue.status === 'rejected') console.warn('[Luoxue] Source boot failed:', luoxue.reason);
     })
     .finally(() => {
-        void initializeLocalCoverRuntime().finally(renderApp);
+        initializeLocalCoverRuntime();
+        renderApp();
     });

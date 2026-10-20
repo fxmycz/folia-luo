@@ -1,5 +1,5 @@
 import type { SonnetTuning, Theme } from '../../../types';
-import { buildSonnetIconDataUrl, buildSonnetIconTextureKey, resolveSonnetIconNames } from './sonnetIcons';
+import { buildSonnetIconDataUrl, buildSonnetIconTextureKey, loadSonnetIconNames } from './sonnetIcons';
 import { getSonnetTexturePool } from './sonnetTexturePool';
 
 // src/components/visualizer/sonnet/sonnetIconTextures.ts
@@ -23,7 +23,7 @@ export const loadSonnetIconTextures = async (
 ): Promise<SonnetIconTextures> => {
     const loaded: SonnetIconTextures = { textures: new Map(), urls: new Set() };
     if (tuning.showOnlyText || !tuning.showBackgroundDecor) return loaded;
-    const names = resolveSonnetIconNames(theme.lyricsIcons);
+    const names = await loadSonnetIconNames(theme.lyricsIcons);
     const resolution = tuning.textureResolution;
     const texturePool = getSonnetTexturePool(pixi);
     await Promise.all(names.map(async (name, index) => {

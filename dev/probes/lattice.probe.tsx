@@ -1,10 +1,13 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { useMotionValue } from 'framer-motion';
 import Lattice from '../../src/components/app/lattice/Lattice';
 import { PlayerState, type Line, type SongResult } from '../../src/types';
 import type { ProbeDefinition } from './definition';
 import { DEFAULT_THEME } from '../../src/services/baseThemes';
+import { useAppViewStore } from '../../src/stores/useAppViewStore';
 import { useLatticeControlsStore } from '../../src/stores/useLatticeControlsStore';
+import { useLatticeSettingsStore } from '../../src/stores/useLatticeSettingsStore';
+import { usePlaybackStore } from '../../src/stores/usePlaybackStore';
 import AppOverlays from '../../src/components/app/overlays/AppOverlays';
 
 // dev/probes/lattice.probe.tsx
@@ -59,11 +62,21 @@ function LatticeProbe({ covers = 'off', queueLength = 12, withLyrics = false }:
     const [command, setCommand] = useState('');
     const [toggles, setToggles] = useState(0);
     const [backs, setBacks] = useState(0);
+    const [homes, setHomes] = useState(0);
     const [seek, setSeek] = useState(42);
     const [playerState, setPlayerState] = useState(PlayerState.PLAYING);
     const [playbackDuration, setPlaybackDuration] = useState(180);
     const isCurrentSongPosterVisible = useLatticeControlsStore(state => state.isCurrentSongPosterVisible);
-    return <div style={{ height: '100vh' }} data-loop={loopMode} data-command={command} data-toggles={toggles} data-backs={backs} data-seek={seek}
+    // As in the app while the wall is up: the app is in the wall's view, where alone the wall acts
+    // on a press of a tile (Lattice.tsx's onPlay).
+    useLayoutEffect(() => {
+        useAppViewStore.setState({ view: 'lattice' });
+    }, []);
+    // The wall's locate button asks about the song the player has, as in the app: the store gets the probe's.
+    useEffect(() => {
+        usePlaybackStore.setState({ currentSong });
+    }, [currentSong]);
+    return <div style={{ height: '100vh' }} data-loop={loopMode} data-command={command} data-toggles={toggles} data-backs={backs} data-homes={homes} data-seek={seek}
         data-current-song-poster-visible={isCurrentSongPosterVisible}>
         <Lattice lyrics={withLyrics ? { lines: lyricLines } : null} controls={{ loopMode,
             playback: { prev: () => setCurrentSong(source[Math.max(0, source.indexOf(currentSong!) - 1)]),
@@ -75,7 +88,7 @@ function LatticeProbe({ covers = 'off', queueLength = 12, withLyrics = false }:
             lyricSource={{ currentTime: time, currentLineIndex: withLyrics ? 0 : -1,
                 lines: withLyrics ? lyricLines : [], theme: DEFAULT_THEME }} lyricKeywordColoringEnabled
             currentTime={time} playbackDuration={playbackDuration} canTogglePlayback isDaylight={false}
-            onBack={() => setBacks(value => value + 1)} onOpenPlayer={() => {}} onPlaySong={song => setCurrentSong(song)}
+            onBack={() => setBacks(value => value + 1)} onGoHome={() => setHomes(value => value + 1)} onOpenPlayer={() => {}} onPlaySong={song => setCurrentSong(song)}
             onTogglePlayback={() => setToggles(value => value + 1)} onSeek={setSeek} />
         <AppOverlays model={{
             floatingControls: currentSong ? {
@@ -111,6 +124,11 @@ function LatticeProbe({ covers = 'off', queueLength = 12, withLyrics = false }:
             <button onClick={() => setSongs(source)}>Restore queue</button>
             <button onClick={() => setPlayerState(value => value === PlayerState.PLAYING ? PlayerState.PAUSED : PlayerState.PLAYING)}>Toggle player state</button>
             <button onClick={() => setPlaybackDuration(value => value + 1)}>Bump duration</button>
+            {/* In the app this setting is switched by a command of the palette (settings-toggle-lattice-auto-focus). */}
+            <button onClick={() => {
+                const settings = useLatticeSettingsStore.getState();
+                settings.handleToggleAutoFocusOnSongChange(!settings.autoFocusOnSongChange);
+            }}>Toggle auto-focus</button>
         </div>
     </div>;
 }

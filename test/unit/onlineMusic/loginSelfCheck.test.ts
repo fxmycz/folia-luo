@@ -45,4 +45,31 @@ describe('provider login self-check entry', () => {
             backend: { probe: { ok: false, error: { code: null, message: 'Failed to fetch' } } },
         });
     });
+
+    it('flags an API address on this device when no API can run here, without probing it', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({ status: 0 });
+        vi.stubGlobal('fetch', fetchMock);
+        const page = (href: string, userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/150') => {
+            vi.stubGlobal('window', { location: new URL(href) });
+            vi.stubGlobal('navigator', { userAgent });
+        };
+
+        page('https://folia.example.com/');
+        await expect(runLoginSelfCheck('netease', 'http://localhost:3000')).resolves.toMatchObject({
+            backend: { probe: { ok: false, error: { code: 'ELOOPBACK' } } },
+        });
+        // 打包进安卓 App 的页面自己可能就在 localhost 上，但手机上不会有 API 服务。
+        page('http://localhost/', 'Mozilla/5.0 (Linux; Android 16; wv) Chrome/153 Mobile Safari/537.36');
+        await expect(runLoginSelfCheck('netease', 'http://127.0.0.1:3000')).resolves.toMatchObject({
+            backend: { probe: { ok: false, error: { code: 'ELOOPBACK' } } },
+        });
+        expect(fetchMock).not.toHaveBeenCalled();
+
+        // 本机开发：页面和 API 都在本机，照常探测。
+        page('http://localhost:5173/');
+        await expect(runLoginSelfCheck('netease', 'http://localhost:3000')).resolves.toMatchObject({ backend: { probe: { ok: true } } });
+        // 相对地址（Docker 的 /netease、Vercel 的 /api/qq）跟着页面走，不算本机。
+        page('https://folia.example.com/');
+        await expect(runLoginSelfCheck('qq', '/api/qq')).resolves.toMatchObject({ backend: { probe: { ok: true } } });
+    });
 });

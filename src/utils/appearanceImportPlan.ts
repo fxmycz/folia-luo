@@ -6,6 +6,7 @@ import {
 import { mergeUrlBackgroundList } from './urlBackground';
 import { normalizeFontWeight } from './fontStacks';
 import type { UrlBackgroundItem } from '../types';
+import { resolveSmartBeatSettings, type SmartBeatPatch } from '../services/beatFx/smartBeatSettings';
 
 // src/utils/appearanceImportPlan.ts
 // What an imported config would actually change, computed before anything is applied. Pure: the
@@ -70,6 +71,7 @@ export const ACTIVATE_CUSTOM_THEME_KEY = 'activateCustomTheme';
 const FIELD_GROUPS: Record<string, ImportGroup> = {
     visualizerMode: 'visualizer',
     randomVisualizerModePerSong: 'visualizer',
+    randomVisualizerModes: 'visualizer',
     visualizerOpacity: 'visualizer',
     hidePlayerTranslationSubtitle: 'visualizer',
     showSubtitleTranslation: 'visualizer',
@@ -80,6 +82,8 @@ const FIELD_GROUPS: Record<string, ImportGroup> = {
     showHarmonySubtitle: 'visualizer',
     harmonySubtitleBackground: 'visualizer',
     visualizerTunings: 'visualizer',
+    // Frozen: the 13 lyric-style tunings below predate the visualizerTunings bundle, which carries any
+    // new style. Do not add a lyric style here.
     classicTuning: 'visualizer',
     cadenzaTuning: 'visualizer',
     partitaTuning: 'visualizer',
@@ -91,6 +95,8 @@ const FIELD_GROUPS: Record<string, ImportGroup> = {
     monetTuning: 'visualizer',
     pendoloTuning: 'visualizer',
     sonnetTuning: 'visualizer',
+    // 智能动感模式: one setting for every visualizer, so not inside any one mode's tuning bundle.
+    smartBeat: 'visualizer',
     temperaTuning: 'visualizer',
     lumiereTuning: 'visualizer',
 
@@ -160,6 +166,8 @@ const TRUTHY_GUARDED_FIELDS = new Set([
     'subtitleFontStyle',
     'subtitleFontFallbackFamilies',
     'visualizerTunings',
+    // Frozen: the 13 lyric-style tunings below predate the visualizerTunings bundle, which carries any
+    // new style. Do not add a lyric style here.
     'classicTuning',
     'cadenzaTuning',
     'partitaTuning',
@@ -171,6 +179,7 @@ const TRUTHY_GUARDED_FIELDS = new Set([
     'monetTuning',
     'pendoloTuning',
     'sonnetTuning',
+    'smartBeat',
     'temperaTuning',
     'lumiereTuning',
     'monetBackgroundTuning',
@@ -188,6 +197,8 @@ const TRUTHY_GUARDED_FIELDS = new Set([
 // Per-renderer tunings the import skips whenever the visualizerTunings bundle is present. The three
 // background tunings are not in this set: they are applied unconditionally.
 const BUNDLED_TUNING_FIELDS = new Set([
+    // Frozen: the 13 lyric-style tunings below predate the visualizerTunings bundle, which carries any
+    // new style. Do not add a lyric style here.
     'classicTuning',
     'cadenzaTuning',
     'partitaTuning',
@@ -444,6 +455,20 @@ export function buildImportPlan({
         if (key === 'lyricsFontWeight' || key === 'subtitleFontWeight') {
             const to = normalizeFontWeight(incoming[key]);
             record({ group, key, from: current[key], to }, isSameValue(to, current[key]));
+            continue;
+        }
+
+        // 智能动感模式 is diffed as the store will hold it (from the PR #750 review): the codec carries
+        // the `enabled` switch for builds before the modes, and a mode this build does not know, which
+        // the store folds or ignores. Diffed raw, the first showed as a row of its own, and the second
+        // as a change that never lands and comes back on every import.
+        if (key === 'smartBeat') {
+            const from = resolveSmartBeatSettings(current[key] as SmartBeatPatch | undefined);
+            const to = resolveSmartBeatSettings(incoming[key] as SmartBeatPatch, from);
+            const change: ImportChange = { group, key, from, to };
+            const children = diffLeaves(from, to, group);
+            if (children.length) change.children = children;
+            record(change, children.length === 0);
             continue;
         }
 

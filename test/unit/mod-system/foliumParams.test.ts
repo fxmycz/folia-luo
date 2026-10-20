@@ -4,16 +4,18 @@ import {
     filterFoliumParamPatch,
     mergeFoliumParamValues,
     resolveFoliumParamStep,
+    resolveFoliumSelectDisplayValue,
     sanitizeFoliumParams,
-} from '@/mods/folium/params';
-import type { FoliumParam } from '@/mods/folium/contract';
+} from '@/mods/params/params';
+import type { FoliumSetting } from '@/mods/folium/contract';
+import { clearFoliumIssues, getFoliumIssues } from '@/mods/runtime/status';
 
 // test/unit/mod-system/foliumParams.test.ts
-// FoliumParam semantics are shared by every schema-backed surface, so these
+// FoliumSetting semantics are shared by every schema-backed surface, so these
 // pin the rules a mod author relies on: which schemas are accepted, which
 // value a field has before it is touched, and how writes are validated.
 
-const number = (overrides: Partial<FoliumParam> = {}): FoliumParam => ({
+const number = (overrides: Partial<FoliumSetting> = {}): FoliumSetting => ({
     key: 'n', type: 'number', label: {}, min: 0, max: 10, ...overrides,
 });
 
@@ -22,7 +24,7 @@ describe('sanitizeFoliumParams', () => {
         const result = sanitizeFoliumParams([
             null,
             { type: 'number' },
-            { key: 'a', type: 'color' },
+            { key: 'a', type: 'colour' },
             { key: 'b', type: 'number', defaultValue: '12' },
             { key: 'c', type: 'boolean', defaultValue: 'yes' },
             { key: 'd', type: 'select', options: [] },
@@ -46,9 +48,42 @@ describe('sanitizeFoliumParams', () => {
         expect(param.options?.map((option) => option.value)).toEqual(['a']);
     });
 
+    it('keeps a colour field only with a #rrggbb default, and stores colours as #rrggbb in lower case', () => {
+        const schema = sanitizeFoliumParams([
+            { key: 'tint', type: 'color', defaultValue: '#FFAA00' },
+            { key: 'plain', type: 'color' },
+            { key: 'short', type: 'color', defaultValue: '#fa0' },
+            { key: 'named', type: 'color', defaultValue: 'red' },
+        ]);
+        expect(schema.map((param) => [param.key, param.defaultValue])).toEqual([['tint', '#ffaa00'], ['plain', undefined]]);
+        expect(mergeFoliumParamValues(schema, { plain: 'blue' })).toEqual({ tint: '#ffaa00', plain: '#ffffff' });
+        expect(filterFoliumParamPatch(schema, { tint: '#00FF7f', plain: '#123' })).toEqual({ tint: '#00ff7f' });
+    });
+
     it('returns an empty list for non-arrays', () => {
         expect(sanitizeFoliumParams(undefined)).toEqual([]);
         expect(sanitizeFoliumParams({ key: 'x' })).toEqual([]);
+    });
+
+    it('puts each dropped field on the mod\'s row when a registry checks it, and nothing when a form draws it', () => {
+        const declared = [
+            { key: 'speed', type: 'number', defaultValue: '2' },
+            { type: 'text' },
+            { key: 'speed', type: 'number' },
+            { key: 'mode', type: 'select', options: [] },
+            { key: 'kept', type: 'boolean' },
+        ];
+        clearFoliumIssues('params-report');
+        sanitizeFoliumParams(declared);
+        expect(getFoliumIssues('params-report')).toEqual([]);
+
+        expect(sanitizeFoliumParams(declared, 'params-report').map((param) => param.key)).toEqual(['speed', 'kept']);
+        expect(getFoliumIssues('params-report').map(({ where, message }) => [where, message])).toEqual([
+            ['settings speed', 'defaultValue must be a finite number'],
+            ['settings #1', 'key must be a non-empty string'],
+            ['settings mode', 'a select needs at least one option with a string value'],
+        ]);
+        clearFoliumIssues('params-report');
     });
 });
 
@@ -79,7 +114,7 @@ describe('coerceFoliumParamValue / filterFoliumParamPatch', () => {
     });
 
     it('only accepts declared select options', () => {
-        const select: FoliumParam = { key: 's', type: 'select', label: {}, options: [{ value: 'a', label: {} }] };
+        const select: FoliumSetting = { key: 's', type: 'select', label: {}, options: [{ value: 'a', label: {} }] };
         expect(coerceFoliumParamValue(select, 'a')).toBe('a');
         expect(coerceFoliumParamValue(select, 'b')).toBeUndefined();
     });
@@ -100,5 +135,20 @@ describe('resolveFoliumParamStep', () => {
         expect(resolveFoliumParamStep({})).toBe(1);
         expect(resolveFoliumParamStep({ min: 0.6, max: 1.4 })).toBe(0.01);
         expect(resolveFoliumParamStep({ min: 0, max: 99.9 })).toBe(0.01);
+    });
+});
+
+describe('resolveFoliumSelectDisplayValue', () => {
+    const options = [{ value: 'a', label: {} }, { value: 'b', label: {} }];
+
+    it('shows a listed stored value as is', () => {
+        expect(resolveFoliumSelectDisplayValue({ options, defaultValue: 'a' }, 'b')).toBe('b');
+    });
+
+    it('falls back to a listed default, else to the first option', () => {
+        expect(resolveFoliumSelectDisplayValue({ options, defaultValue: 'b' }, 'gone')).toBe('b');
+        expect(resolveFoliumSelectDisplayValue({ options, defaultValue: 'unlisted' }, undefined)).toBe('a');
+        expect(resolveFoliumSelectDisplayValue({ options }, 3)).toBe('a');
+        expect(resolveFoliumSelectDisplayValue({ options: [] }, 'x')).toBe('');
     });
 });

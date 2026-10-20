@@ -78,11 +78,21 @@
 
 .lattice-field:active { cursor: grabbing; }
 
+/* No `will-change: transform` here, and do NOT reintroduce it as an optimization (LatticePoster.tsx
+   carries the same warning for posters). The camera always writes translate3d(...) scale(...), which
+   already gives the world its own compositor layer, and the scale only moves on a resize. What the hint
+   cost: Chromium clamps the raster scale of a will-change subtree to at least the native scale, while
+   the wall is always zoomed out (0.52–0.76), so every poster, plate and tile was rasterized at 1x and
+   drawn at half size, ~3.7x the tile memory. On Android Chromium that pushed the wall past the tile
+   budget, and every overlay opened over it (settings, release notes, other modals) showed missing
+   tiles, i.e. the wall flashing through, for a frame or two.
+   The one thing the hint did buy is that sub-pixel camera motion never re-rasters the wall. Without it
+   that now comes from formatWorldTransform (wallView.ts) snapping the translation to device pixels;
+   the two belong together, so do not drop the snapping either. */
 .lattice-world {
     position: absolute;
     inset: 0;
     transform-origin: 0 0;
-    will-change: transform;
 }
 
 .lattice-poster {

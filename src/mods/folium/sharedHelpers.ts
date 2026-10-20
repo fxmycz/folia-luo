@@ -1,6 +1,7 @@
 import type { Line, Theme } from '@/types';
 import { getLineRenderEndTime } from '@/utils/lyrics/renderHints';
 import { segmentLyricWords } from '@/utils/lyrics/wordSegmentation';
+import { segmentIcuFolia } from '@/utils/lyrics/icuFolia';
 import { resolveThemeFontStack, resolveThemeFontWeight, resolveThemeTranslationFontStack } from '@/utils/fontStacks';
 import { getRecentCompletedLine, getUpcomingLine, getUpcomingLines } from '@/components/visualizer/runtime';
 import { buildWordColorRanges, resolveWordColor } from '@/components/visualizer/wordColoring';
@@ -14,7 +15,7 @@ import { normalizeFoliumLyricsTrack, parseFoliumLyricsTrack } from './lyricsSour
 // FoliumLine / FoliumTheme mirror the host Line / Theme, so every helper here
 // is the host function itself behind a type boundary, not a second copy.
 // Nothing here holds state, and both the main and the export window get it.
-// `parse` (1.4) is the one asynchronous helper: it runs the local lyric file
+// `parse` is the one asynchronous helper: it runs the local lyric file
 // pipeline, whose parsers live in a worker.
 
 // FoliumLine carries every Line field the helpers read, under the same names.
@@ -22,7 +23,13 @@ const asLines = (lines: readonly FoliumLine[]) => lines as unknown as Line[];
 
 const lyricsHelpers: FoliumLyricsHelpers = {
     getLineRenderEndTime: (line) => getLineRenderEndTime(line),
-    segmentWords: (line) => segmentLyricWords({ fullText: line.fullText, wordSegments: line.wordSegments }),
+    // A mod's line carries the user's split but not icu-folia's baked one (the DTO copies only the
+    // contract's fields), so the default split is computed here; it is memoised for per-frame use.
+    segmentWords: (line) => segmentLyricWords({
+        fullText: line.fullText,
+        wordSegments: line.wordSegments,
+        autoWordSegments: segmentIcuFolia(line.fullText) ?? undefined,
+    }),
     getRecentCompletedLine: (lines, lineIndex, time) => (
         getRecentCompletedLine({
             lines: asLines(lines),

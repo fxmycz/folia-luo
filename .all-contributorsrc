@@ -699,6 +699,60 @@
       "contributions": [
         "code"
       ]
+    },
+    {
+      "login": "w-j-y-wjy",
+      "name": "Yjan",
+      "avatar_url": "https://avatars.githubusercontent.com/u/194654120?v=4",
+      "profile": "https://github.com/w-j-y-wjy",
+      "contributions": [
+        "bug"
+      ]
+    },
+    {
+      "login": "vispce",
+      "name": "puppy",
+      "avatar_url": "https://avatars.githubusercontent.com/u/232888492?v=4",
+      "profile": "http://catvb.com",
+      "contributions": [
+        "bug"
+      ]
+    },
+    {
+      "login": "MarsSwimmer",
+      "name": "MarsSwimmer",
+      "avatar_url": "https://avatars.githubusercontent.com/u/146618222?v=4",
+      "profile": "https://github.com/MarsSwimmer",
+      "contributions": [
+        "ideas"
+      ]
+    },
+    {
+      "login": "8ctsmR",
+      "name": "nexquan",
+      "avatar_url": "https://avatars.githubusercontent.com/u/340171085?v=4",
+      "profile": "https://github.com/8ctsmR",
+      "contributions": [
+        "bug"
+      ]
+    },
+    {
+      "login": "awaxiaoyu",
+      "name": "awaxiaoyu",
+      "avatar_url": "https://avatars.githubusercontent.com/u/125581307?v=4",
+      "profile": "https://github.com/awaxiaoyu",
+      "contributions": [
+        "code"
+      ]
+    },
+    {
+      "login": "nasaeds",
+      "name": "nasaed",
+      "avatar_url": "https://avatars.githubusercontent.com/u/135424755?v=4",
+      "profile": "https://github.com/nasaeds",
+      "contributions": [
+        "bug"
+      ]
     }
   ],
   "commit": false,
