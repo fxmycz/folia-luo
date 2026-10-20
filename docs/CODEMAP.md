@@ -18,9 +18,9 @@
 | library | 256+ |
 | backend/electron | 128+ |
 | services | 128+ |
+| src (其他) | 128+ |
 | utils | 128+ |
 | hooks | 64+ |
-| src (其他) | 64+ |
 | 其他 | 64+ |
 | stores | 32+ |
 | types | 16+ |
@@ -58,6 +58,7 @@
 | 32+ | `src/library/core/directory/directory.contract.ts` |
 | 32+ | `src/library/core/home/homeModel.contract.ts` |
 | 32+ | `src/library/suites/bravais/bravaisLayer.ts` |
+| 32+ | `src/luoxue/sdk/request.ts` |
 | 32+ | `src/services/baseThemes.ts` |
 | 32+ | `src/services/onlineMusic/providerRegistry.ts` |
 | 32+ | `src/services/onlineMusic/songMetadata.ts` |
